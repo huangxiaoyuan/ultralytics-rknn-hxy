@@ -9,7 +9,7 @@ import torch.nn.functional as F
 
 from ultralytics.utils.torch_utils import fuse_conv_and_bn
 
-from .conv import Conv, DWConv, GhostConv, LightConv, RepConv, autopad
+from .conv import Conv, DWConv, GhostConv, LightConv, RepConv, autopad, NPUConv
 from .transformer import TransformerBlock
 
 __all__ = (
@@ -1106,6 +1106,72 @@ class C3k2(C2f):
         )
 
 
+# ============ 修改后：NPU-C3k2 ============
+class NPU_C3k2(nn.Module):
+    """
+    参数顺序必须是: c1, c2, n, shortcut, g, e
+    parse_model 会传入: [c1, c2, n, shortcut]
+    """
+
+    def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5):
+        super().__init__()
+        n = int(n)
+        c1 = int(c1)
+        c2 = int(c2)
+
+        self.c = int(c2 * e)
+
+        self.cv1 = NPUConv(c1, 2 * self.c, 1, 1)
+        self.cv2 = NPUConv((2 + n) * self.c, c2, 1)
+        self.se = NPU_SE_Block(c2)
+        self.m = nn.ModuleList(
+            NPU_Bottleneck(self.c, self.c, shortcut, g) for _ in range(n)
+        )
+
+    def forward(self, x):
+        y = list(self.cv1(x).split((self.c, self.c), 1))
+        y.extend(m(y[-1]) for m in self.m)
+        out = self.cv2(torch.cat(y, 1))
+        return self.se(out)
+
+
+class NPU_SE_Block(nn.Module):
+    def __init__(self, c, ratio=16):
+        super().__init__()
+        c = int(c)  # 🔑 强制int
+        ratio = int(ratio)
+
+        self.squeeze = nn.AdaptiveAvgPool2d(1)
+        self.excitation = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(c, max(1, c // ratio), bias=False),  # 🔑 max(1,...) 防止为0
+            nn.ReLU6(inplace=True),
+            nn.Linear(max(1, c // ratio), c, bias=False),
+            nn.Hardsigmoid(inplace=True),
+        )
+        self.c = c
+
+    def forward(self, x):
+        b, c, _, _ = x.shape
+        scale = self.squeeze(x)
+        scale = self.excitation(scale).view(b, c, 1, 1)
+        return x * scale
+
+
+class NPU_Bottleneck(nn.Module):
+    def __init__(self, c1, c2, shortcut=True, g=1, e=0.5):
+        super().__init__()
+        c1 = int(c1)  # 🔑 强制int
+        c2 = int(c2)
+        c_ = int(c2 * e)
+
+        self.cv1 = NPUConv(c1, c_, 3, 1)
+        self.cv2 = NPUConv(c_, c2, 3, 1)
+        self.add = shortcut and c1 == c2
+
+    def forward(self, x):
+        return x + self.cv2(self.cv1(x)) if self.add else self.cv2(self.cv1(x))
+
 class C3k(C3):
     """C3k is a CSP bottleneck module with customizable kernel sizes for feature extraction in neural networks."""
 
@@ -1432,6 +1498,32 @@ class PSA(nn.Module):
         b = b + self.ffn(b)
         return self.cv2(torch.cat((a, b), 1))
 
+
+# ============ 替换方案：SE注意力（NPU友好）============
+class NPU_SE_Block(nn.Module):
+    """
+    Squeeze-and-Excitation替代PSA
+    全部由 GlobalAvgPool + FC + ReLU6/HardSigmoid 构成
+    RK3588 NPU完全支持，无需fallback CPU
+    """
+
+    def __init__(self, c, ratio=16):
+        super().__init__()
+        self.squeeze = nn.AdaptiveAvgPool2d(1)  # ✅ NPU支持
+        self.excitation = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(c, c // ratio, bias=False),
+            nn.ReLU6(inplace=True),  # ✅ NPU支持
+            nn.Linear(c // ratio, c, bias=False),
+            nn.Hardsigmoid(inplace=True),  # ✅ 比sigmoid更NPU友好
+        )
+        self.c = c
+
+    def forward(self, x):
+        b, c, _, _ = x.shape
+        scale = self.squeeze(x)
+        scale = self.excitation(scale).view(b, c, 1, 1)
+        return x * scale
 
 class C2PSA(nn.Module):
     """C2PSA module with attention mechanism for enhanced feature extraction and processing.

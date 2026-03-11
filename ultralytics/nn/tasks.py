@@ -72,6 +72,11 @@ from ultralytics.nn.modules import (
     YOLOESegment,
     YOLOESegment26,
     v10Detect,
+    NPUConv,        # ← 新增
+    NPU_C3k2,       # ← 新增
+    NPU_SE_Block,   # ← 新增
+    NPU_Bottleneck, # ← 新增
+    NPU_Detect,     # ← 新增
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, LOGGER, WINDOWS, YAML, colorstr, emojis
 from ultralytics.utils.checks import check_requirements, check_suffix, check_yaml
@@ -1608,6 +1613,7 @@ def parse_model(d, ch, verbose=True):
             SCDown,
             C2fCIB,
             A2C2f,
+            NPUConv,
         }
     )
     repeat_modules = frozenset(  # modules with 'repeat' arguments
@@ -1627,6 +1633,7 @@ def parse_model(d, ch, verbose=True):
             C2fCIB,
             C2PSA,
             A2C2f,
+
         }
     )
     for i, (f, n, m, args) in enumerate(d["backbone"] + d["head"]):  # from, number, module, args
@@ -1678,6 +1685,21 @@ def parse_model(d, ch, verbose=True):
             args = [ch[f]]
         elif m is Concat:
             c2 = sum(ch[x] for x in f)
+        # 🔑 新增 NPU_C3k2 的专属处理（仿照C3k2的逻辑）：
+        elif m is NPU_C3k2:
+            c1, c2 = ch[f], args[0]
+            if c2 != nc:
+                c2 = make_divisible(min(c2, max_channels) * width, 8)
+            args = [c1, c2, *args[1:]]  # [c1, c2, shortcut, ...]
+            args.insert(2, n)  # [c1, c2, n, shortcut, ...]
+            n = 1
+            legacy = False
+
+        # 同样为 NPU_SE_Block、NPU_Bottleneck 添加处理（如果yaml里有单独使用）：
+        elif m is NPU_SE_Block:
+            c2 = ch[f]  # 通道数不变
+            args = [c2, *args]
+
         elif m in frozenset(
             {
                 Detect,
@@ -1691,12 +1713,13 @@ def parse_model(d, ch, verbose=True):
                 Pose26,
                 OBB,
                 OBB26,
+
             }
         ):
             args.extend([reg_max, end2end, [ch[x] for x in f]])
             if m is Segment or m is YOLOESegment or m is Segment26 or m is YOLOESegment26:
                 args[2] = make_divisible(min(args[2], max_channels) * width, 8)
-            if m in {Detect, YOLOEDetect, Segment, Segment26, YOLOESegment, YOLOESegment26, Pose, Pose26, OBB, OBB26}:
+            if m in {Detect, YOLOEDetect, Segment, Segment26, YOLOESegment, YOLOESegment26, Pose, Pose26, OBB, OBB26, NPU_Detect}:
                 m.legacy = legacy
         elif m is v10Detect:
             args.append([ch[x] for x in f])

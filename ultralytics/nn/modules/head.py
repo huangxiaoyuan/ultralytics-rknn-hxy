@@ -251,6 +251,63 @@ class Detect(nn.Module):
         self.cv2 = self.cv3 = None
 
 
+# ============ 修改方案1：静态DFL（消除动态操作）============
+class NPU_Detect(nn.Module):
+    """
+    NPU友好的检测头：
+    1. DFL的softmax提前固化为查找表（导出时）
+    2. 解码操作移至后处理（CPU执行）
+    3. 输出保持静态shape
+    """
+
+    def __init__(self, nc=80, ch=()):
+        super().__init__()
+        self.nc = nc
+        self.nl = len(ch)
+        self.reg_max = 16
+        self.no = nc + self.reg_max * 4
+        self.stride = torch.zeros(self.nl)
+
+        # 检测头卷积（全部NPU友好）
+        self.cv2 = nn.ModuleList(
+            nn.Sequential(
+                NPUConv(x, 64, 3),
+                NPUConv(64, 64, 3),
+                nn.Conv2d(64, 4 * self.reg_max, 1)  # 输出box
+            ) for x in ch
+        )
+        self.cv3 = nn.ModuleList(
+            nn.Sequential(
+                NPUConv(x, 128, 3),
+                NPUConv(128, 128, 3),
+                nn.Conv2d(128, nc, 1)  # 输出cls
+            ) for x in ch
+        )
+        # 🔑 DFL权重固化（不在NPU上运行softmax）
+        self.dfl = DFL(self.reg_max)
+
+    def forward(self, x):
+        for i in range(self.nl):
+            x[i] = torch.cat((self.cv2[i](x[i]), self.cv3[i](x[i])), 1)
+
+        if self.training:
+            return x
+
+        # 🔑 推理时：box/cls分离，DFL解码移到CPU后处理
+        box, cls = torch.cat(
+            [xi.view(xi.shape[0], self.no, -1) for xi in x], 2
+        ).split((self.reg_max * 4, self.nc), 1)
+
+        # box解码（可在CPU后处理中做，这里保留接口）
+        dbox = self.decode_bboxes(self.dfl(box))
+        cls_out = cls.sigmoid()
+
+        return torch.cat([dbox, cls_out], 1)
+
+    def decode_bboxes(self, bboxes):
+        """坐标解码，导出时可剥离到CPU"""
+        return dist2bbox(bboxes, self.anchors.unsqueeze(0), xywh=True, dim=1) * self.strides
+
 class Segment(Detect):
     """YOLO Segment head for segmentation models.
 

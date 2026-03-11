@@ -36,36 +36,70 @@ def autopad(k, p=None, d=1):  # kernel, padding, dilation
     return p
 
 
+# class Conv(nn.Module):
+#     """Standard convolution module with batch normalization and activation.
+#
+#     Attributes:
+#         conv (nn.Conv2d): Convolutional layer.
+#         bn (nn.BatchNorm2d): Batch normalization layer.
+#         act (nn.Module): Activation function layer.
+#         default_act (nn.Module): Default activation function (SiLU).
+#     """
+#
+#     default_act = nn.SiLU()  # default activation
+#
+#     def __init__(self, c1, c2, k=1, s=1, p=None, g=1, d=1, act=True):
+#         """Initialize Conv layer with given parameters.
+#
+#         Args:
+#             c1 (int): Number of input channels.
+#             c2 (int): Number of output channels.
+#             k (int): Kernel size.
+#             s (int): Stride.
+#             p (int, optional): Padding.
+#             g (int): Groups.
+#             d (int): Dilation.
+#             act (bool | nn.Module): Activation function.
+#         """
+#         super().__init__()
+#         self.conv = nn.Conv2d(c1, c2, k, s, autopad(k, p, d), groups=g, dilation=d, bias=False)
+#         self.bn = nn.BatchNorm2d(c2)
+#         self.act = self.default_act if act is True else act if isinstance(act, nn.Module) else nn.Identity()
+#
+#     def forward(self, x):
+#         """Apply convolution, batch normalization and activation to input tensor.
+#
+#         Args:
+#             x (torch.Tensor): Input tensor.
+#
+#         Returns:
+#             (torch.Tensor): Output tensor.
+#         """
+#         return self.act(self.bn(self.conv(x)))
+#
+#     def forward_fuse(self, x):
+#         """Apply convolution and activation without batch normalization.
+#
+#         Args:
+#             x (torch.Tensor): Input tensor.
+#
+#         Returns:
+#             (torch.Tensor): Output tensor.
+#         """
+#         return self.act(self.conv(x))
+
+
+# ============ 修改后代码 ============
 class Conv(nn.Module):
-    """Standard convolution module with batch normalization and activation.
-
-    Attributes:
-        conv (nn.Conv2d): Convolutional layer.
-        bn (nn.BatchNorm2d): Batch normalization layer.
-        act (nn.Module): Activation function layer.
-        default_act (nn.Module): Default activation function (SiLU).
-    """
-
-    default_act = nn.SiLU()  # default activation
+    # 🔑 改动：将默认激活从SiLU改为ReLU6
+    # 原因：ReLU6在RK3588 NPU上完全INT8量化支持，无fallback
+    default_act = nn.ReLU6()  # ✅ NPU原生支持
 
     def __init__(self, c1, c2, k=1, s=1, p=None, g=1, d=1, act=True):
-        """Initialize Conv layer with given parameters.
-
-        Args:
-            c1 (int): Number of input channels.
-            c2 (int): Number of output channels.
-            k (int): Kernel size.
-            s (int): Stride.
-            p (int, optional): Padding.
-            g (int): Groups.
-            d (int): Dilation.
-            act (bool | nn.Module): Activation function.
-        """
         super().__init__()
         self.conv = nn.Conv2d(c1, c2, k, s, autopad(k, p, d), groups=g, dilation=d, bias=False)
         self.bn = nn.BatchNorm2d(c2)
         self.act = self.default_act if act is True else act if isinstance(act, nn.Module) else nn.Identity()
-
     def forward(self, x):
         """Apply convolution, batch normalization and activation to input tensor.
 
@@ -88,6 +122,16 @@ class Conv(nn.Module):
         """
         return self.act(self.conv(x))
 
+# 🔑 新增：硬件感知卷积，BN层融合接口
+class NPUConv(Conv):
+    """专为RK3588 NPU设计的卷积块"""
+    def __init__(self, c1, c2, k=1, s=1, p=None, g=1):
+        # 🔑 所有参数强制转int，彻底避免tuple/float传入
+        c1, c2, k, s = int(c1), int(c2), int(k), int(s)
+        g = int(g)
+        super().__init__(c1, c2, k, s, p, g, act=nn.ReLU6())
+    def forward_fuse(self, x):
+        return self.act(self.conv(x))
 
 class Conv2(Conv):
     """Simplified RepConv module with Conv fusing.

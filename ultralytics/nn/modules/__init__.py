@@ -59,6 +59,10 @@ from .block import (
     ResNetLayer,
     SCDown,
     TorchVision,
+    NPU_C3k2,       # ← 新增
+    NPU_SE_Block,   # ← 新增
+    NPU_Bottleneck, # ← 新增
+
 )
 from .conv import (
     CBAM,
@@ -75,6 +79,7 @@ from .conv import (
     LightConv,
     RepConv,
     SpatialAttention,
+    NPUConv,  # ← 新增
 )
 from .head import (
     OBB,
@@ -92,6 +97,7 @@ from .head import (
     YOLOESegment,
     YOLOESegment26,
     v10Detect,
+    NPU_Detect,  # ← 新增
 )
 from .transformer import (
     AIFI,
@@ -187,4 +193,9 @@ __all__ = (
     "YOLOESegment",
     "YOLOESegment26",
     "v10Detect",
+    "NPUConv",
+    "NPU_C3k2",
+    "NPU_SE_Block",
+    "NPU_Bottleneck",
+    "NPU_Detect",
 )
