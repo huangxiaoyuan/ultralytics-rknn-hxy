@@ -1713,6 +1713,7 @@ def parse_model(d, ch, verbose=True):
                 Pose26,
                 OBB,
                 OBB26,
+                NPU_Detect,
 
             }
         ):

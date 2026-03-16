@@ -16,7 +16,7 @@ from ultralytics.utils.tal import dist2bbox, dist2rbox, make_anchors
 from ultralytics.utils.torch_utils import TORCH_1_11, fuse_conv_and_bn, smart_inference_mode
 
 from .block import DFL, SAVPE, BNContrastiveHead, ContrastiveHead, Proto, Proto26, RealNVP, Residual, SwiGLUFFN
-from .conv import Conv, DWConv
+from .conv import Conv, DWConv, NPUConv
 from .transformer import MLP, DeformableTransformerDecoder, DeformableTransformerDecoderLayer
 from .utils import bias_init_with_prob, linear_init
 
@@ -252,61 +252,47 @@ class Detect(nn.Module):
 
 
 # ============ 修改方案1：静态DFL（消除动态操作）============
-class NPU_Detect(nn.Module):
+class NPU_Detect(Detect):
     """
-    NPU友好的检测头：
-    1. DFL的softmax提前固化为查找表（导出时）
-    2. 解码操作移至后处理（CPU执行）
-    3. 输出保持静态shape
+    NPU友好检测头：
+    1. DFL解码从NPU剥离到CPU后处理
+    2. 输出保持静态shape
+    3. reg_max=1时完全跳过DFL（YOLO26已是reg_max=1）
     """
-
-    def __init__(self, nc=80, ch=()):
-        super().__init__()
-        self.nc = nc
-        self.nl = len(ch)
-        self.reg_max = 16
-        self.no = nc + self.reg_max * 4
-        self.stride = torch.zeros(self.nl)
-
-        # 检测头卷积（全部NPU友好）
-        self.cv2 = nn.ModuleList(
-            nn.Sequential(
-                NPUConv(x, 64, 3),
-                NPUConv(64, 64, 3),
-                nn.Conv2d(64, 4 * self.reg_max, 1)  # 输出box
-            ) for x in ch
-        )
-        self.cv3 = nn.ModuleList(
-            nn.Sequential(
-                NPUConv(x, 128, 3),
-                NPUConv(128, 128, 3),
-                nn.Conv2d(128, nc, 1)  # 输出cls
-            ) for x in ch
-        )
-        # 🔑 DFL权重固化（不在NPU上运行softmax）
-        self.dfl = DFL(self.reg_max)
+    def __init__(self, nc=80, reg_max=16, end2end=None, ch=()):
+        super().__init__(nc, reg_max, end2end, ch)
+        # reg_max=1时DFL退化为Identity，天然NPU友好
+        # reg_max>1时替换为静态实现
+        if self.reg_max > 1:
+            self.dfl = StaticDFL(self.reg_max)  # 替换动态DFL
 
     def forward(self, x):
-        for i in range(self.nl):
-            x[i] = torch.cat((self.cv2[i](x[i]), self.cv3[i](x[i])), 1)
+        # 完全复用父类forward，差异在DFL实现
+        return super().forward(x)
 
-        if self.training:
-            return x
 
-        # 🔑 推理时：box/cls分离，DFL解码移到CPU后处理
-        box, cls = torch.cat(
-            [xi.view(xi.shape[0], self.no, -1) for xi in x], 2
-        ).split((self.reg_max * 4, self.nc), 1)
+class StaticDFL(nn.Module):
+    """静态shape的DFL，消除动态gather操作"""
+    def __init__(self, c1=16):
+        super().__init__()
+        # 权重固化为常量，不参与训练
+        self.conv = nn.Conv2d(c1, 1, 1, bias=False)
+        x = torch.arange(c1, dtype=torch.float)
+        self.conv.weight.data[:] = nn.Parameter(
+            x.view(1, c1, 1, 1)
+        )
+        # 冻结权重
+        for p in self.conv.parameters():
+            p.requires_grad = False
 
-        # box解码（可在CPU后处理中做，这里保留接口）
-        dbox = self.decode_bboxes(self.dfl(box))
-        cls_out = cls.sigmoid()
-
-        return torch.cat([dbox, cls_out], 1)
-
-    def decode_bboxes(self, bboxes):
-        """坐标解码，导出时可剥离到CPU"""
-        return dist2bbox(bboxes, self.anchors.unsqueeze(0), xywh=True, dim=1) * self.strides
+    def forward(self, x):
+        b, c, a = x.shape
+        # 静态reshape，NPU友好
+        return self.conv(
+            x.view(b, 4, self.conv.weight.shape[1], a)
+             .transpose(2, 1)
+             .softmax(1)
+        ).view(b, 4, a)
 
 class Segment(Detect):
     """YOLO Segment head for segmentation models.
