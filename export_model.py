@@ -8,8 +8,8 @@ warnings.filterwarnings('ignore')
 # ================================================================
 # 配置区域
 # ================================================================
-MODEL_PATH  = r'E:\bird\yolo_npu\train2\weights\best.pt'
-OUTPUT_DIR  = r'E:\bird\yolo_npu\train2\weights\export'
+MODEL_PATH  = r'E:\bird\yolo_npu\train4\weights\best.pt'
+OUTPUT_DIR  = r'E:\bird\yolo_npu\train4\weights\export'
 IMG_SIZE    = 320
 OPSET       = 13       # K1推荐11~13，RK3588推荐12
 SIMPLIFY    = True     # 简化ONNX图，消除冗余节点

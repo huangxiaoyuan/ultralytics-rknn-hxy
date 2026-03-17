@@ -431,8 +431,8 @@ class YOLOv12_ONNX_Inference:
 # ═══════════════════════════════════════════════════════════
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="YOLOv12 ONNX — SpaceMIT K1 优化推理")
-    parser.add_argument("--model",    default="/home/yolov12/npu/best_320_op13.onnx")
-    parser.add_argument("--image",    default="Platalea_minor_095.jpg")
+    parser.add_argument("--model",    default="/home/yolov12/npu/best_npu_320_op13.onnx")
+    parser.add_argument("--image",    default="Platalea_minor_053.jpg")
     parser.add_argument("--size",     default=320,  type=int,  help="输入尺寸（宽=高）")
     parser.add_argument("--threads",  default=4,    type=int,  help="intra_op_num_threads")
     parser.add_argument("--bench",    default=100,  type=int,  help="压测帧数（0=单张）")
