@@ -2,8 +2,8 @@
 import os
 import sys
 import torch
-import warnings
-warnings.filterwarnings('ignore')
+#import warnings
+#warnings.filterwarnings('ignore')
 
 # ================================================================
 # 配置区域

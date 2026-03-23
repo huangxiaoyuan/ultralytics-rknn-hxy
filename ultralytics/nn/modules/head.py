@@ -251,48 +251,268 @@ class Detect(nn.Module):
         self.cv2 = self.cv3 = None
 
 
-# ============ 修改方案1：静态DFL（消除动态操作）============
+# ─────────────────────────────────────────────────────────────────────────────
+# 模型侧：NPU_Detect
+# ─────────────────────────────────────────────────────────────────────────────
+
 class NPU_Detect(Detect):
     """
-    NPU友好检测头：
-    1. DFL解码从NPU剥离到CPU后处理
-    2. 输出保持静态shape
-    3. reg_max=1时完全跳过DFL（YOLO26已是reg_max=1）
-    """
-    def __init__(self, nc=80, reg_max=16, end2end=None, ch=()):
-        super().__init__(nc, reg_max, end2end, ch)
-        # reg_max=1时DFL退化为Identity，天然NPU友好
-        # reg_max>1时替换为静态实现
-        if self.reg_max > 1:
-            self.dfl = StaticDFL(self.reg_max)  # 替换动态DFL
+    NPU 友好检测头，解决父类 forward 中三类 NPU 不友好操作：
 
-    def forward(self, x):
-        # 完全复用父类forward，差异在DFL实现
-        return super().forward(x)
+    问题1  self.dfl        → 父类 DFL 含动态 reshape，替换为 StaticDFL（reg_max>1时）
+    问题2  make_anchors    → 动态 anchor 生成，含条件分支，完全移到 CPU
+    问题3  dist2bbox/sigmoid → 坐标解码和激活，完全移到 CPU
+
+    导出后模型输出两个张量（静态 shape）：
+        boxes:  (B, reg_max*4, N)   原始 dist 格式，未做 DFL/解码
+        scores: (B, nc, N)          原始 logit，未做 sigmoid
+    N = sum(Hi*Wi) for each feature level，对于 320x320 输入、3层：
+        N = 40*40 + 20*20 + 10*10 = 1600+400+100 = 2100
+    """
+
+    def __init__(self, nc=80, reg_max=16, end2end=None, ch=()):
+        # end2end 强制关闭，NPU 不支持其动态 NMS 分支
+        super().__init__(nc=nc, reg_max=reg_max, end2end=False, ch=ch)
+
+        if self.reg_max > 1:
+            self.dfl = StaticDFL(self.reg_max)   # 替换动态 DFL
+        # reg_max==1 时 dfl 已经是 nn.Identity()，天然静态
+
+    def forward(self, x: list):
+        """
+        只做卷积特征提取，拼接后直接返回原始输出，
+        不做 anchor 生成、dist2bbox、sigmoid。
+        返回: (boxes, scores)
+            boxes  shape: (B, reg_max*4, N)
+            scores shape: (B, nc, N)
+        """
+        bs = x[0].shape[0]
+
+        raw_boxes_list  = []
+        raw_scores_list = []
+
+        for i in range(self.nl):
+            # cv2 → box 分支，cv3 → cls 分支
+            box_feat = self.cv2[i](x[i])   # (B, reg_max*4, Hi, Wi)
+            cls_feat = self.cv3[i](x[i])   # (B, nc, Hi, Wi)
+
+            raw_boxes_list.append(box_feat.view(bs, self.reg_max * 4, -1))
+            raw_scores_list.append(cls_feat.view(bs, self.nc, -1))
+
+        boxes  = torch.cat(raw_boxes_list,  dim=-1)   # (B, reg_max*4, N)
+        scores = torch.cat(raw_scores_list, dim=-1)   # (B, nc, N)
+
+        return boxes, scores
 
 
 class StaticDFL(nn.Module):
-    """静态shape的DFL，消除动态gather操作"""
-    def __init__(self, c1=16):
+    """
+    静态 DFL：用固定 weight 的 Conv1d 替代动态 reshape+softmax+matmul，
+    shape 在 export 时完全静态，对 RKNN/TensorRT 友好。
+    """
+    def __init__(self, reg_max: int = 16):
         super().__init__()
-        # 权重固化为常量，不参与训练
-        self.conv = nn.Conv2d(c1, 1, 1, bias=False)
-        x = torch.arange(c1, dtype=torch.float)
-        self.conv.weight.data[:] = nn.Parameter(
-            x.view(1, c1, 1, 1)
-        )
-        # 冻结权重
-        for p in self.conv.parameters():
-            p.requires_grad = False
+        self.reg_max = reg_max
+        # 等价于 arange(reg_max) 的线性期望，用 1x1 Conv1d 实现
+        self.conv = nn.Conv1d(reg_max, 1, kernel_size=1, bias=False)
+        nn.init.constant_(self.conv.weight, 0.0)
+        with torch.no_grad():
+            w = torch.arange(reg_max, dtype=torch.float32)
+            self.conv.weight.data[0, :, 0] = w   # shape (1, reg_max, 1)
 
-    def forward(self, x):
-        b, c, a = x.shape
-        # 静态reshape，NPU友好
-        return self.conv(
-            x.view(b, 4, self.conv.weight.shape[1], a)
-             .transpose(2, 1)
-             .softmax(1)
-        ).view(b, 4, a)
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        x: (B, reg_max*4, N)
+        返回: (B, 4, N)  — 对每个坐标分量做 softmax 后加权求和
+        """
+        b, c, n = x.shape
+        # (B, 4, reg_max, N) → softmax on reg_max dim
+        x = x.view(b, 4, self.reg_max, n)
+        x = x.softmax(dim=2)                          # (B, 4, reg_max, N)
+        # (B*4, reg_max, N) → Conv1d → (B*4, 1, N)
+        x = x.view(b * 4, self.reg_max, n)
+        x = self.conv(x)                              # (B*4, 1, N)
+        return x.view(b, 4, n)                        # (B, 4, N)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CPU 后处理：对应 NPU_Detect 的两路输出
+# ─────────────────────────────────────────────────────────────────────────────
+
+def make_anchors_np(img_size: int, strides: list[int]) -> tuple[np.ndarray, np.ndarray]:
+    """
+    在 CPU/NumPy 侧生成 anchor 中心点和对应 stride，
+    完全等价于 ultralytics 的 make_anchors(offset=0.5)。
+
+    Args:
+        img_size: 输入图像边长（正方形），如 320
+        strides:  各检测层步长，如 [8, 16, 32]
+
+    Returns:
+        anchors: (N, 2)  anchor 中心坐标（特征图尺度）
+        stride_tensor: (N,)  每个 anchor 对应的 stride
+    """
+    anchors_list, strides_list = [], []
+    for s in strides:
+        g = img_size // s                         # 特征图尺寸
+        xs = np.arange(g, dtype=np.float32) + 0.5
+        ys = np.arange(g, dtype=np.float32) + 0.5
+        # meshgrid: xs 沿列变化，ys 沿行变化
+        grid_x, grid_y = np.meshgrid(xs, ys)     # (g, g)
+        anchors_list.append(
+            np.stack([grid_x.ravel(), grid_y.ravel()], axis=1)  # (g*g, 2)
+        )
+        strides_list.append(np.full(g * g, s, dtype=np.float32))
+
+    anchors      = np.concatenate(anchors_list, axis=0)   # (N, 2)
+    stride_tensor = np.concatenate(strides_list, axis=0)  # (N,)
+    return anchors, stride_tensor
+
+
+def dfl_np(dist: np.ndarray, reg_max: int) -> np.ndarray:
+    """
+    NumPy 版 DFL：对 dist 做 softmax 后加权求和。
+
+    Args:
+        dist: (4, N)  原始 dist 输出，已按 reg_max 拆分
+              实际输入 shape 为 (reg_max*4, N)，函数内部 reshape
+        reg_max: DFL 通道数
+
+    Returns:
+        (4, N)  解码后的 ltrb 值（特征图尺度）
+    """
+    # (reg_max*4, N) → (4, reg_max, N)
+    n = dist.shape[1]
+    dist = dist.reshape(4, reg_max, n)
+
+    # softmax on reg_max dim
+    dist = dist - dist.max(axis=1, keepdims=True)   # 数值稳定
+    exp  = np.exp(dist)
+    dist = exp / exp.sum(axis=1, keepdims=True)     # (4, reg_max, N)
+
+    # 加权求和：权重为 [0, 1, ..., reg_max-1]
+    weights = np.arange(reg_max, dtype=np.float32).reshape(1, reg_max, 1)
+    return (dist * weights).sum(axis=1)             # (4, N)
+
+
+def dist2bbox_np(dist_ltrb: np.ndarray, anchors: np.ndarray) -> np.ndarray:
+    """
+    dist(ltrb) + anchor → xyxy（输入图像尺度，已乘 stride）。
+
+    Args:
+        dist_ltrb: (4, N)  ltrb 偏移（特征图尺度）
+        anchors:   (N, 2)  anchor 中心 (cx, cy)（特征图尺度）
+
+    Returns:
+        (N, 4)  x1y1x2y2（特征图尺度，调用方再乘 stride）
+    """
+    lt = dist_ltrb[:2].T   # (N, 2)  left, top
+    rb = dist_ltrb[2:].T   # (N, 2)  right, bottom
+    x1y1 = anchors - lt    # (N, 2)
+    x2y2 = anchors + rb    # (N, 2)
+    return np.concatenate([x1y1, x2y2], axis=1)   # (N, 4)
+
+
+def nms_boxes_np(boxes: np.ndarray, scores: np.ndarray, nms_thresh: float) -> np.ndarray:
+    """标准 IoU NMS，boxes 为 xyxy 格式。"""
+    x1, y1, x2, y2 = boxes[:, 0], boxes[:, 1], boxes[:, 2], boxes[:, 3]
+    areas  = (x2 - x1) * (y2 - y1)
+    order  = scores.argsort()[::-1]
+    keep   = []
+    while order.size > 0:
+        i = order[0]
+        keep.append(i)
+        xx1 = np.maximum(x1[i], x1[order[1:]])
+        yy1 = np.maximum(y1[i], y1[order[1:]])
+        xx2 = np.minimum(x2[i], x2[order[1:]])
+        yy2 = np.minimum(y2[i], y2[order[1:]])
+        w1  = np.maximum(0.0, xx2 - xx1 + 1e-5)
+        h1  = np.maximum(0.0, yy2 - yy1 + 1e-5)
+        inter = w1 * h1
+        ovr   = inter / (areas[i] + areas[order[1:]] - inter)
+        order = order[np.where(ovr <= nms_thresh)[0] + 1]
+    return np.array(keep, dtype=np.int64)
+
+
+def yolov12_post_process_full(
+    outputs,
+    img_size:   int   = 320,
+    strides:    list  = None,
+    reg_max:    int   = 16,
+    conf_thresh: float = 0.25,
+    nms_thresh:  float = 0.45,
+):
+    """
+    对应 NPU_Detect 输出的完整 CPU 后处理。
+
+    Args:
+        outputs:     RKNN inference 返回的列表
+                     outputs[0]: boxes  shape (1, reg_max*4, N)
+                     outputs[1]: scores shape (1, nc, N)
+        img_size:    输入图像边长
+        strides:     各层 stride，默认 [8, 16, 32]
+        reg_max:     与模型导出时一致
+        conf_thresh: 置信度阈值
+        nms_thresh:  NMS IoU 阈值
+
+    Returns:
+        boxes   (M, 4)  xyxy，输入图像尺度
+        classes (M,)    类别索引
+        scores  (M,)    置信度
+    """
+    if strides is None:
+        strides = [8, 16, 32]
+
+    # ── 取出原始输出 ──────────────────────────────────────────────────────────
+    raw_boxes  = outputs[0][0]   # (reg_max*4, N)
+    raw_scores = outputs[1][0]   # (nc, N)
+
+    # ── 1. DFL 解码：dist → ltrb（特征图尺度）────────────────────────────────
+    if reg_max > 1:
+        ltrb = dfl_np(raw_boxes, reg_max)   # (4, N)
+    else:
+        ltrb = raw_boxes                    # reg_max==1，Identity，直接用
+
+    # ── 2. 生成 anchor，dist2bbox，乘 stride → 输入图像尺度的 xyxy ───────────
+    anchors, stride_tensor = make_anchors_np(img_size, strides)   # (N,2), (N,)
+    boxes_xyxy = dist2bbox_np(ltrb, anchors)                      # (N, 4) 特征图尺度
+    boxes_xyxy = boxes_xyxy * stride_tensor[:, None]              # (N, 4) 输入图像尺度
+
+    # ── 3. sigmoid + 过滤 ──────────────────────────────────────────────────────
+    scores_sig = 1.0 / (1.0 + np.exp(-raw_scores))   # (nc, N)
+    scores_sig = scores_sig.T                          # (N, nc)
+
+    class_max_score = scores_sig.max(axis=-1)          # (N,)
+    classes         = scores_sig.argmax(axis=-1)       # (N,)
+
+    mask = class_max_score >= conf_thresh
+    boxes_xyxy      = boxes_xyxy[mask]
+    class_max_score = class_max_score[mask]
+    classes         = classes[mask]
+
+    if len(boxes_xyxy) == 0:
+        return None, None, None
+
+    # ── 4. 按类别 NMS ─────────────────────────────────────────────────────────
+    nboxes, nclasses, nscores = [], [], []
+    for c in set(classes):
+        inds = np.where(classes == c)[0]
+        b    = boxes_xyxy[inds]
+        s    = class_max_score[inds]
+        keep = nms_boxes_np(b, s, nms_thresh)
+        if len(keep):
+            nboxes.append(b[keep])
+            nclasses.append(classes[inds][keep])
+            nscores.append(s[keep])
+
+    if not nboxes:
+        return None, None, None
+
+    return (
+        np.concatenate(nboxes),
+        np.concatenate(nclasses),
+        np.concatenate(nscores),
+    )
 
 class Segment(Detect):
     """YOLO Segment head for segmentation models.
