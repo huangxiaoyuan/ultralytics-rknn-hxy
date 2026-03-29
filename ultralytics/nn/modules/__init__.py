@@ -52,6 +52,9 @@ from .block import (
     HGStem,
     ImagePoolingAttn,
     MaxSigmoidAttnBlock,
+    NPU_Bottleneck,  # ← 新增
+    NPU_C3k2,  # ← 新增
+    NPU_SE_Block,  # ← 新增
     Proto,
     RepC3,
     RepNCSPELAN4,
@@ -59,10 +62,6 @@ from .block import (
     ResNetLayer,
     SCDown,
     TorchVision,
-    NPU_C3k2,       # ← 新增
-    NPU_SE_Block,   # ← 新增
-    NPU_Bottleneck, # ← 新增
-
 )
 from .conv import (
     CBAM,
@@ -77,9 +76,9 @@ from .conv import (
     GhostConv,
     Index,
     LightConv,
+    NPUConv,  # ← 新增
     RepConv,
     SpatialAttention,
-    NPUConv,  # ← 新增
 )
 from .head import (
     OBB,
@@ -87,6 +86,7 @@ from .head import (
     Classify,
     Detect,
     LRPCHead,
+    NPU_Detect,  # ← 新增
     Pose,
     Pose26,
     RTDETRDecoder,
@@ -97,7 +97,6 @@ from .head import (
     YOLOESegment,
     YOLOESegment26,
     v10Detect,
-    NPU_Detect,  # ← 新增
 )
 from .transformer import (
     AIFI,
@@ -171,6 +170,11 @@ __all__ = (
     "MLPBlock",
     "MSDeformAttn",
     "MaxSigmoidAttnBlock",
+    "NPUConv",
+    "NPU_Bottleneck",
+    "NPU_C3k2",
+    "NPU_Detect",
+    "NPU_SE_Block",
     "Pose",
     "Pose26",
     "Proto",
@@ -193,9 +197,4 @@ __all__ = (
     "YOLOESegment",
     "YOLOESegment26",
     "v10Detect",
-    "NPUConv",
-    "NPU_C3k2",
-    "NPU_SE_Block",
-    "NPU_Bottleneck",
-    "NPU_Detect",
 )
