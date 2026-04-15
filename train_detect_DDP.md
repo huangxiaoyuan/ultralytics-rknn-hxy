@@ -8,7 +8,9 @@
 
 # 新建
 screen -S train
-torchrun --node_rank 0 --nproc_per_node=2 --nnodes=1 --rdzv_endpoint=localhost:1234 train_detect_server.py --batch 32
+torchrun --nproc_per_node=2 --master_port=29500  --rdzv_endpoint=localhost:1234 train_detect_server.py --batch 32
+torchrun --nproc_per_node=2 --master_port=29500 train_detect_server.py
+python -m torch.distributed.run --nproc_per_node 2 train_detect_server.py --batch 32
 # 断开
 Ctrl+A → D
 # 重新连接

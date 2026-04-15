@@ -1,7 +1,7 @@
 import os
 
-img_dir = 'E:/bird/dataset/Calibration_data_200/calibration_img'
-output_file = './dataset.txt'
+img_dir = 'E:/bird/dataset/Calibration_data_1200'
+output_file = './dataset1200.txt'
 
 extensions = ('.jpg', '.jpeg', '.png', '.bmp')
 

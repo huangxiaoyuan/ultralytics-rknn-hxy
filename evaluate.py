@@ -13,10 +13,10 @@ warnings.filterwarnings('ignore')
 # ================================================================
 # 配置区域 - 根据实际情况修改
 # ================================================================
-MODEL_PATH  = '/data/rknn/runs/detect/train9/weights/best.pt'
+MODEL_PATH  = '/data/rknn/runs/detect/train2/weights/best.pt'
 DATA_CONFIG = 'ultralytics/cfg/datasets/bird_24_server.yaml'   # 数据集配置文件
 IMG_SIZE    = 640
-DEVICE      = 'GPU'   # 'cpu' 或 '0'(GPU)
+DEVICE      = '0'   # 'cpu' 或 '0'(GPU)
 CONF_THRES  = 0.25
 IOU_THRES   = 0.45
 # ================================================================

@@ -3,15 +3,34 @@
 2. built by huangxiaoyuan, 07.19.2025
 3. fix bug: input shape, 07.28.2025
 4. add: comprehensive inference speed benchmark, 08.xx.2025
+5. fix: total = inference + postprocess only, add P50/P90/P99, fix providers bug
 """
 import cv2
 import numpy as np
 import onnxruntime as ort
-import spacemit_ort
 import time
 import argparse
 import collections
 import statistics
+
+try:
+    import spacemit_ort
+    _HAS_SPACEMIT = True
+except ImportError:
+    _HAS_SPACEMIT = False
+
+
+# ─────────────────────────────────────────────
+#  百分位计算
+# ─────────────────────────────────────────────
+def _percentile(data: list, p: float) -> float:
+    if not data:
+        return 0.0
+    s = sorted(data)
+    idx = (p / 100) * (len(s) - 1)
+    lo = int(idx)
+    hi = min(lo + 1, len(s) - 1)
+    return s[lo] + (idx - lo) * (s[hi] - s[lo])
 
 
 # ─────────────────────────────────────────────
@@ -32,7 +51,6 @@ class StageTimer:
 
     def __init__(self, history_len: int = 100):
         self._t0: dict = {}
-        # 滑动窗口，保存最近 history_len 帧的耗时（毫秒）
         self.history: dict[str, collections.deque] = {
             s: collections.deque(maxlen=history_len) for s in self.STAGE_ORDER
         }
@@ -43,7 +61,6 @@ class StageTimer:
         self._t0[stage] = time.perf_counter()
 
     def stop(self, stage: str) -> float:
-        """停止计时并返回本次耗时（ms）"""
         elapsed = (time.perf_counter() - self._t0[stage]) * 1000.0
         self.history[stage].append(elapsed)
         return elapsed
@@ -55,7 +72,7 @@ class StageTimer:
     def _stats(self, stage: str) -> dict:
         data = list(self.history[stage])
         if not data:
-            return {"n": 0, "avg": 0, "min": 0, "max": 0, "std": 0, "fps": 0}
+            return {}
         avg = statistics.mean(data)
         return {
             "n":   len(data),
@@ -63,29 +80,61 @@ class StageTimer:
             "min": min(data),
             "max": max(data),
             "std": statistics.stdev(data) if len(data) > 1 else 0.0,
+            "p50": _percentile(data, 50),
+            "p90": _percentile(data, 90),
+            "p99": _percentile(data, 99),
             "fps": 1000.0 / avg if avg > 0 else 0,
         }
 
     # ── 打印报告 ────────────────────────────────
     def report(self, title: str = "Performance Report"):
-        sep = "=" * 60
+        W    = 79
+        sep  = "=" * W
+        thin = "-" * W
+
+        # 阶段显示名映射
+        labels = {
+            "preprocess":  "Pre-Process",
+            "inference":   "NPU Inference",
+            "postprocess": "Post-Process",
+            "draw":        "Draw Results",
+            "total":       "Total Pipeline",
+        }
+
+        # 取 total FPS
+        total_s = self._stats("total")
+        fps_str = f"{total_s['fps']:.1f}" if total_s else "N/A"
+
         print(f"\n{sep}")
         print(f"  {title}")
+        print(f"  平均吞吐量 (Total Pipeline): {fps_str} FPS")
+        print(f"  注: Total Pipeline = NPU Inference + Post-Process")
         print(sep)
-        print(f"  {'Stage':<14} {'Avg(ms)':>8} {'Min(ms)':>8} {'Max(ms)':>8} {'Std(ms)':>8} {'FPS':>7}")
-        print(f"  {'-'*55}")
+
+        header = (
+            f"  {'阶段 (ms)':<16}| "
+            f"{'Min':>7} | {'Max':>7} | {'Mean':>7} | "
+            f"{'P50':>7} | {'P90':>7} | {'P99':>7} | {'Std':>5}"
+        )
+        print(header)
+        print(f"  {thin}")
+
         for stage in self.STAGE_ORDER + ["total"]:
             s = self._stats(stage)
-            if s["n"] == 0:
+            if not s:
                 continue
-            print(
-                f"  {stage:<14} {s['avg']:>8.2f} {s['min']:>8.2f} "
-                f"{s['max']:>8.2f} {s['std']:>8.2f} {s['fps']:>7.1f}"
+            label = labels.get(stage, stage)
+            row = (
+                f"  {label:<16}| "
+                f"{s['min']:>7.2f} | {s['max']:>7.2f} | {s['avg']:>7.2f} | "
+                f"{s['p50']:>7.2f} | {s['p90']:>7.2f} | {s['p99']:>7.2f} | "
+                f"{s['std']:>5.1f}"
             )
-        print(sep + "\n")
+            print(row)
+
+        print(f"  {thin}\n")
 
     def last(self, stage: str) -> float:
-        """返回某阶段最近一帧的耗时（ms），没有记录则返回 0"""
         d = self.history[stage]
         return d[-1] if d else 0.0
 
@@ -102,39 +151,40 @@ class YOLOv12_ONNX_Inference:
         conf_thres: float = 0.5,
         iou_thres: float = 0.5,
         score_thres: float = 0.25,
-        benchmark_history: int = 100,   # 滑动窗口帧数
-        warmup_runs: int = 3,            # 预热推理次数
+        benchmark_history: int = 100,
+        warmup_runs: int = 0,
     ):
-        """
-        初始化 YOLOv12 ONNX 推理器。
-
-        :param onnx_path:          ONNX 模型文件路径
-        :param input_size:         模型输入尺寸 (宽, 高)
-        :param conf_thres:         置信度阈值
-        :param iou_thres:          NMS IOU 阈值
-        :param score_thres:        类别分数阈值
-        :param benchmark_history:  滑动窗口保留的最近帧数
-        :param warmup_runs:        初始化后自动预热的推理次数（避免首帧异常偏高）
-        """
-        self.conf_thres   = conf_thres
-        self.iou_thres    = iou_thres
-        self.score_thres  = score_thres
-        self.warmup_runs  = warmup_runs
+        self.conf_thres  = conf_thres
+        self.iou_thres   = iou_thres
+        self.score_thres = score_thres
+        self.warmup_runs = warmup_runs
 
         # ── 计时器 ──────────────────────────────
         self.timer = StageTimer(history_len=benchmark_history)
 
         # ── ONNX Runtime 会话 ───────────────────
-        ep_provider_options = {}
-        self.session = ort.InferenceSession(
-            onnx_path,
-            providers=["SpaceMITExecutionProvider"],
-            provider_options=[ep_provider_options],
-        )
+        if _HAS_SPACEMIT:
+            try:
+                self.session = ort.InferenceSession(
+                    onnx_path,
+                    providers=["SpaceMITExecutionProvider", "CPUExecutionProvider"],
+                    provider_options=[{}],
+                )
+                print("[Info] 使用 SpaceMITExecutionProvider")
+            except Exception as e:
+                print(f"[Warning] SpaceMIT 失败，回退 CPU: {e}")
+                self.session = ort.InferenceSession(
+                    onnx_path, providers=["CPUExecutionProvider"]
+                )
+        else:
+            self.session = ort.InferenceSession(
+                onnx_path, providers=["CPUExecutionProvider"]
+            )
+            print("[Info] 使用 CPUExecutionProvider")
 
         # ── 输入信息 ────────────────────────────
-        model_inputs        = self.session.get_inputs()
-        self.input_name     = model_inputs[0].name
+        model_inputs            = self.session.get_inputs()
+        self.input_name         = model_inputs[0].name
         self.input_width, self.input_height = input_size
 
         # ── 类别列表 ────────────────────────────
@@ -169,31 +219,30 @@ class YOLOv12_ONNX_Inference:
         self._warmup()
 
     # ──────────────────────────────────────────
-    #  预热：用随机数据跑几次，避免首帧 JIT/初始化延迟
+    #  预热
     # ──────────────────────────────────────────
     def _warmup(self):
         if self.warmup_runs <= 0:
             return
-        print(f"[Warmup] 正在用随机数据预热 {self.warmup_runs} 次...")
-        dummy = np.random.rand(1, 3, self.input_height, self.input_width).astype(np.float32)
+        print(f"[Warmup] 预热 {self.warmup_runs} 次...")
+        dummy    = np.zeros((1, 3, self.input_height, self.input_width), dtype=np.float32)
         out_name = self.session.get_outputs()[0].name
         for i in range(self.warmup_runs):
             t0 = time.perf_counter()
             self.session.run([out_name], {self.input_name: dummy})
             elapsed = (time.perf_counter() - t0) * 1000
             print(f"  warmup [{i+1}/{self.warmup_runs}]: {elapsed:.2f} ms")
+            time.sleep(0.05)
         print("[Warmup] 完成\n")
 
     # ──────────────────────────────────────────
     #  预处理
     # ──────────────────────────────────────────
     def preprocess(self, image: np.ndarray):
-        """letterbox + HWC→CHW + normalize"""
         img_h, img_w, _ = image.shape
-
-        scale  = min(self.input_height / img_h, self.input_width / img_w)
-        new_w  = int(img_w * scale)
-        new_h  = int(img_h * scale)
+        scale   = min(self.input_height / img_h, self.input_width / img_w)
+        new_w   = int(img_w * scale)
+        new_h   = int(img_h * scale)
         resized = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
 
         canvas = np.full((self.input_height, self.input_width, 3), 114, dtype=np.uint8)
@@ -203,22 +252,18 @@ class YOLOv12_ONNX_Inference:
 
         input_tensor = (canvas[:, :, ::-1].transpose(2, 0, 1) / 255.0).astype(np.float32)
         input_tensor = np.expand_dims(input_tensor, axis=0)
-
         return input_tensor, scale, pad_w, pad_h
 
     # ──────────────────────────────────────────
     #  后处理
     # ──────────────────────────────────────────
     def postprocess(self, output, original_shape, scale, pad_w, pad_h):
-        """适配 (batch, attributes, predictions) → boxes/scores/class_ids"""
         img_h, img_w = original_shape
+        predictions  = np.squeeze(output[0]).T       # (N, 4+classes)
 
-        # (1, 28, 8400) → (8400, 28)
-        predictions = np.squeeze(output[0]).T
-
-        num_classes     = len(self.classes)
-        box_preds       = predictions[:, :4]
-        class_scores    = predictions[:, 4:]           # (8400, 24)
+        box_preds    = predictions[:, :4]
+        class_scores = predictions[:, 4:]
+        class_scores = 1 / (1 + np.exp(-class_scores))  # sigmoid
 
         max_class_scores = np.max(class_scores, axis=1)
         class_ids        = np.argmax(class_scores, axis=1)
@@ -227,24 +272,21 @@ class YOLOv12_ONNX_Inference:
         if not np.any(keep):
             return [], [], []
 
-        final_boxes_raw  = box_preds[keep]
-        final_scores     = max_class_scores[keep]
-        final_class_ids  = class_ids[keep]
+        final_boxes_raw = box_preds[keep]
+        final_scores    = max_class_scores[keep]
+        final_class_ids = class_ids[keep]
 
-        # (cx, cy, w, h) → (x1, y1, x2, y2)
         x1 = final_boxes_raw[:, 0] - final_boxes_raw[:, 2] / 2
         y1 = final_boxes_raw[:, 1] - final_boxes_raw[:, 3] / 2
         x2 = final_boxes_raw[:, 0] + final_boxes_raw[:, 2] / 2
         y2 = final_boxes_raw[:, 1] + final_boxes_raw[:, 3] / 2
         boxes = np.stack([x1, y1, x2, y2], axis=1)
 
-        # 映射回原始图像坐标
         boxes[:, [0, 2]] = (boxes[:, [0, 2]] - pad_w) / scale
         boxes[:, [1, 3]] = (boxes[:, [1, 3]] - pad_h) / scale
         boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, img_w)
         boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, img_h)
 
-        # NMS
         cv_boxes  = [[int(b[0]), int(b[1]), int(b[2]-b[0]), int(b[3]-b[1])] for b in boxes]
         cv_scores = final_scores.tolist()
         indices   = cv2.dnn.NMSBoxes(cv_boxes, cv_scores, self.conf_thres, self.iou_thres)
@@ -252,11 +294,7 @@ class YOLOv12_ONNX_Inference:
         if len(indices) > 0:
             if isinstance(indices, np.ndarray):
                 indices = indices.flatten()
-            return (
-                boxes[indices].astype(int),
-                final_scores[indices],
-                final_class_ids[indices],
-            )
+            return boxes[indices].astype(int), final_scores[indices], final_class_ids[indices]
         return [], [], []
 
     # ──────────────────────────────────────────
@@ -270,54 +308,48 @@ class YOLOv12_ONNX_Inference:
             cv2.rectangle(image, (x1, y1), (x2, y2), color, 2)
             (lw, lh), base = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
             cv2.rectangle(image, (x1, y1 - lh - base), (x1 + lw, y1), color, -1)
-            cv2.putText(image, label, (x1, y1 - base), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
+            cv2.putText(image, label, (x1, y1 - base),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
         return image
 
     # ──────────────────────────────────────────
-    #  主检测入口（含完整分阶段计时）
+    #  主检测入口
     # ──────────────────────────────────────────
     def detect(self, image_path: str, verbose: bool = True) -> np.ndarray | None:
-        """
-        执行完整检测并记录每阶段耗时。
-
-        :param image_path: 图片路径
-        :param verbose:    是否打印本帧各阶段耗时
-        :return:           绘制结果的图像（BGR numpy array）
-        """
         original_image = cv2.imread(image_path)
         if original_image is None:
             print(f"[Error] 无法读取图片：{image_path}")
             return None
 
         original_shape = original_image.shape[:2]
-        t_total_start  = time.perf_counter()
 
-        # ── 预处理 ──────────────────────────────
+        # ── 预处理（不计入 total）──────────────
         self.timer.start("preprocess")
         input_tensor, scale, pad_w, pad_h = self.preprocess(original_image)
         ms_pre = self.timer.stop("preprocess")
 
-        # ── 推理 ────────────────────────────────
+        # ── 推理 + 后处理 计入 total ───────────
+        t_total_start = time.perf_counter()
+
         out_name = self.session.get_outputs()[0].name
         self.timer.start("inference")
         outputs  = self.session.run([out_name], {self.input_name: input_tensor})
         ms_inf   = self.timer.stop("inference")
 
-        # ── 后处理 ──────────────────────────────
         self.timer.start("postprocess")
         boxes, scores, class_ids = self.postprocess(
             outputs, original_shape, scale, pad_w, pad_h
         )
         ms_post = self.timer.stop("postprocess")
 
-        # ── 绘图 ────────────────────────────────
+        # total = inference + postprocess
+        ms_total = (time.perf_counter() - t_total_start) * 1000
+        self.timer.record_total(ms_total)
+
+        # ── 绘图（不计入 total）────────────────
         self.timer.start("draw")
         result_image = self.draw_results(original_image, boxes, scores, class_ids)
         ms_draw = self.timer.stop("draw")
-
-        # ── 总计 ────────────────────────────────
-        ms_total = (time.perf_counter() - t_total_start) * 1000
-        self.timer.record_total(ms_total)
 
         if verbose:
             print(
@@ -325,23 +357,16 @@ class YOLOv12_ONNX_Inference:
                 f"infer={ms_inf:.1f}ms | "
                 f"post={ms_post:.1f}ms | "
                 f"draw={ms_draw:.1f}ms | "
-                f"total={ms_total:.1f}ms | "
+                f"total(inf+post)={ms_total:.1f}ms | "
                 f"FPS={1000/ms_total:.1f}"
             )
 
         return result_image
 
     # ──────────────────────────────────────────
-    #  批量压测（连续推理同一张图 N 次）
+    #  批量压测
     # ──────────────────────────────────────────
     def benchmark(self, image_path: str, runs: int = 50, verbose_per_frame: bool = False):
-        """
-        对单张图像连续推理 `runs` 次，结束后打印统计报告。
-
-        :param image_path:        图片路径
-        :param runs:              推理次数
-        :param verbose_per_frame: 是否打印每帧耗时
-        """
         print(f"\n[Benchmark] 开始对 '{image_path}' 连续推理 {runs} 次 ...")
         for i in range(runs):
             self.detect(image_path, verbose=verbose_per_frame)
@@ -355,28 +380,26 @@ class YOLOv12_ONNX_Inference:
 # ─────────────────────────────────────────────
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="YOLOv12 ONNX Inference with Benchmark")
-    parser.add_argument("--model",  default="/home/yolov12/npu/best_320_op13.onnx", help="ONNX 模型路径")
-    parser.add_argument("--image",  default="Platalea_minor_095.jpg",               help="输入图片路径")
-    parser.add_argument("--size",   default=320, type=int,                           help="模型输入尺寸（宽=高）")
-    parser.add_argument("--bench",  default=50,  type=int,                           help="压测帧数（0 表示只跑单张）")
-    parser.add_argument("--warmup", default=3,   type=int,                           help="预热推理次数")
+    parser.add_argument("--model",  default="/home/yolov12/npu_models/320/best_yolov12n_320.onnx")
+    parser.add_argument("--image",  default="Platalea_minor_095.jpg")
+    parser.add_argument("--size",   default=320, type=int)
+    parser.add_argument("--bench",  default=50,  type=int, help="压测帧数（0=单张推理）")
+    parser.add_argument("--warmup", default=0,   type=int)
     args = parser.parse_args()
 
-    # ── 实例化检测器 ─────────────────────────────
     yolo_detector = YOLOv12_ONNX_Inference(
-        onnx_path       = args.model,
-        input_size      = (args.size, args.size),
-        warmup_runs     = args.warmup,
+        onnx_path         = args.model,
+        input_size        = (args.size, args.size),
+        warmup_runs       = args.warmup,
         benchmark_history = max(args.bench, 100),
     )
 
     if args.bench > 0:
-        # ── 压测模式 ─────────────────────────────
         yolo_detector.benchmark(args.image, runs=args.bench, verbose_per_frame=False)
     else:
-        # ── 单张推理模式 ─────────────────────────
         result_img = yolo_detector.detect(args.image, verbose=True)
         if result_img is not None:
-            cv2.imwrite("e_detection_result.jpg", result_img)
+            cv2.imwrite("detection_result.jpg", result_img)
             cv2.imshow("Detection Result", result_img)
+            cv2.waitKey(0)
             cv2.destroyAllWindows()

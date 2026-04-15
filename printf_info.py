@@ -3,7 +3,7 @@ import torch
 from ultralytics.nn.tasks import DetectionModel
 from ultralytics.utils.torch_utils import model_info
 
-yaml_path = r'E:\yolo-rknn\ultralytics\cfg\models\12\yolo12n_npu_h.yaml'
+yaml_path = r'E:\yolo-rknn\ultralytics\cfg\models\12\yolo12n_npu_cc.yaml'
 
 # 构建模型
 model = DetectionModel(cfg=yaml_path, nc=24)

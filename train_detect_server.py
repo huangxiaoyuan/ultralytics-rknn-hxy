@@ -1,20 +1,32 @@
+from click.core import batch
+
 from ultralytics import YOLO
 import warnings
 import os
-os.environ['MKL_THREADING_LAYER'] = 'GNU'  # ← 必须第一行
-os.environ['NCCL_TIMEOUT'] = '300'          # ← 超时从3小时缩短到5分钟
-warnings.filterwarnings('ignore')
-
+#os.environ['MKL_THREADING_LAYER'] = 'GNU'  # ← 必须第一行
+#os.environ['NCCL_TIMEOUT'] = '300'          # ← 超时从3小时缩短到5分钟
+#warnings.filterwarnings('ignore')
+#local_rank = int(os.environ.get("LOCAL_RANK", 0))
 # Load a model
-model = YOLO("ultralytics/cfg/models/12/yolo12n_npu_h.yaml",task="detect").load("yolo12n.pt")
-
-# Train the model
-train_results = model.train(
-    data="ultralytics/cfg/datasets/bird_24_server.yaml",  # path to dataset YAML
-    epochs=300,  # number of training epochs
-    imgsz=640,  # training image size
-    device="0,1"  # distributed training must setting
-)
+if __name__ == "__main__":
+    model = YOLO("ultralytics/cfg/models/v8/yolov8n.yaml", task="detect").load("yolo8n.pt")
+    train_results = model.train(
+        data="ultralytics/cfg/datasets/bird_cub200_server.yaml",
+        epochs=300,
+        imgsz=640,
+        device="0,1",
+        batch=16,
+        val=True,
+    )
+    # 自动获取本次训练的保存目录
+    best_pt = "weights/best.pt"
+    print(f"使用模型: {best_pt}")
+    # 单卡评估
+    metrics = YOLO(str(best_pt)).val(
+        data="ultralytics/cfg/datasets/bird_cub200_server.yaml",
+        device=0,
+    )
+    print(metrics)
 
 # Evaluate model performance on the validation set
 #metrics = model.val()

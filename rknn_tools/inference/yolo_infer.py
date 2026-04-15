@@ -10,7 +10,7 @@ from rknnlite.api import RKNNLite
 RK3566_RK3568_RKNN_MODEL = 'yolov5s_for_rk3566_rk3568.rknn'
 RK3588_RKNN_MODEL        = 'bird_rknn_model/yolov12-bird-320_rk3588.rknn'
 RK3562_RKNN_MODEL        = 'yolov5s_for_rk3562.rknn'
-IMG_PATH                 = 'platalea_minor.jpg'
+IMG_PATH                 = 'Hydrophasianus_chirurgus_172.jpg'
 
 # ─── 推理参数 ────────────────────────────────────────────────────
 OBJ_THRESH = 0.5      # 置信度阈值（严格大于，过滤 sigmoid(0)=0.5 的噪声）

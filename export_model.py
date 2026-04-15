@@ -10,10 +10,10 @@ import torch
 # ================================================================
 MODEL_PATH  = r'E:\bird\yolo_npu\train4\weights\best.pt'
 OUTPUT_DIR  = r'E:\bird\yolo_npu\train4\weights\export'
-IMG_SIZE    = 320
+IMG_SIZE    = 640
 OPSET       = 13       # K1推荐11~13，RK3588推荐12
 SIMPLIFY    = True     # 简化ONNX图，消除冗余节点
-DEVICE      = 'CPU'
+DEVICE      = 'GPU'
 # ================================================================
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -222,16 +222,3 @@ if __name__ == '__main__':
     print(f"\n{'='*60}")
     print(f"  后续步骤")
     print(f"{'='*60}")
-    print(f"""
-  ▶ RK3588 部署路径：
-    1. 将 {onnx_path} 拷贝到装有 rknn-toolkit2 的环境
-    2. 运行量化脚本:
-       python export_rknn.py --onnx {os.path.basename(onnx_path)}
-    3. 推理: python rk3588_infer.py
-
-  ▶ SpacemiT K1 部署路径：
-    1. 将 {onnx_path} 拷贝到 K1 设备
-    2. 运行 xquant 量化:
-       xquant --config xquant_bird.json
-    3. 推理: python infer_k1.py
-""")
