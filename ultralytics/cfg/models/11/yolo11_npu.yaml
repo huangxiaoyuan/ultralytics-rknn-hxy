@@ -1,7 +1,7 @@
 # 原始yolo11.yaml 的backbone含PSA，这里完全替换
 # 新建 yolo11_npu.yaml
 
-nc: 80  # 类别数
+nc: 80 # 类别数
 
 # 关键比例参数（n/s/m/l/x各有不同）
 scales:
@@ -10,28 +10,28 @@ scales:
   m: [0.50, 1.00, 512]
 
 backbone:
-  - [-1, 1, NPUConv,   [64, 3, 2]]        # 0-P1  out=64
-  - [-1, 1, NPUConv,   [128, 3, 2]]       # 1-P2  out=128
-  - [-1, 2, NPU_C3k2,  [128, True]]       # 2     out=128  (c2=128, shortcut=True)
-  - [-1, 1, NPUConv,   [256, 3, 2]]       # 3-P3  out=256
-  - [-1, 2, NPU_C3k2,  [256, True]]       # 4     out=256
-  - [-1, 1, NPUConv,   [512, 3, 2]]       # 5-P4  out=512
-  - [-1, 2, NPU_C3k2,  [512, True]]       # 6     out=512
-  - [-1, 1, NPUConv,   [1024, 3, 2]]      # 7-P5  out=1024
-  - [-1, 2, NPU_C3k2,  [1024, True]]      # 8     out=1024
-  - [-1, 1, SPPF,      [1024, 5]]         # 9     out=1024
+  - [-1, 1, NPUConv, [64, 3, 2]] # 0-P1  out=64
+  - [-1, 1, NPUConv, [128, 3, 2]] # 1-P2  out=128
+  - [-1, 2, NPU_C3k2, [128, True]] # 2     out=128  (c2=128, shortcut=True)
+  - [-1, 1, NPUConv, [256, 3, 2]] # 3-P3  out=256
+  - [-1, 2, NPU_C3k2, [256, True]] # 4     out=256
+  - [-1, 1, NPUConv, [512, 3, 2]] # 5-P4  out=512
+  - [-1, 2, NPU_C3k2, [512, True]] # 6     out=512
+  - [-1, 1, NPUConv, [1024, 3, 2]] # 7-P5  out=1024
+  - [-1, 2, NPU_C3k2, [1024, True]] # 8     out=1024
+  - [-1, 1, SPPF, [1024, 5]] # 9     out=1024
 
 head:
-  - [-1, 1,  nn.Upsample, [None, 2, 'nearest']]  # 10
-  - [[-1, 6], 1, Concat,  [1]]                    # 11  out=1024+512=1536
-  - [-1, 2,  NPU_C3k2,   [512, False]]            # 12  out=512
-  - [-1, 1,  nn.Upsample, [None, 2, 'nearest']]  # 13
-  - [[-1, 4], 1, Concat,  [1]]                    # 14  out=512+256=768
-  - [-1, 2,  NPU_C3k2,   [256, False]]            # 15  out=256  (P3输出)
-  - [-1, 1,  NPUConv,    [256, 3, 2]]             # 16  out=256
-  - [[-1, 12], 1, Concat, [1]]                    # 17  out=256+512=768
-  - [-1, 2,  NPU_C3k2,   [512, False]]            # 18  out=512  (P4输出)
-  - [-1, 1,  NPUConv,    [512, 3, 2]]             # 19  out=512
-  - [[-1, 9], 1, Concat,  [1]]                    # 20  out=512+1024=1536
-  - [-1, 2,  NPU_C3k2,   [1024, False]]           # 21  out=1024 (P5输出)
-  - [[15, 18, 21], 1, Detect, [nc]]               # 22  检测头
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]] # 10
+  - [[-1, 6], 1, Concat, [1]] # 11  out=1024+512=1536
+  - [-1, 2, NPU_C3k2, [512, False]] # 12  out=512
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]] # 13
+  - [[-1, 4], 1, Concat, [1]] # 14  out=512+256=768
+  - [-1, 2, NPU_C3k2, [256, False]] # 15  out=256  (P3输出)
+  - [-1, 1, NPUConv, [256, 3, 2]] # 16  out=256
+  - [[-1, 12], 1, Concat, [1]] # 17  out=256+512=768
+  - [-1, 2, NPU_C3k2, [512, False]] # 18  out=512  (P4输出)
+  - [-1, 1, NPUConv, [512, 3, 2]] # 19  out=512
+  - [[-1, 9], 1, Concat, [1]] # 20  out=512+1024=1536
+  - [-1, 2, NPU_C3k2, [1024, False]] # 21  out=1024 (P5输出)
+  - [[15, 18, 21], 1, Detect, [nc]] # 22  检测头
