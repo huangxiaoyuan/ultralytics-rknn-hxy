@@ -33,12 +33,12 @@
 
 标准 YOLOv12 在部署到 RK3588（RKNN）或 SpacemiT K1（ONNX Runtime SpaceMIT EP）时，以下算子会产生 **CPU fallback**，导致 NPU 利用率不足 60%、推理延迟大幅增加：
 
-| 算子 / 模块 | 问题 |
-|------------|------|-------------|
-| `SiLU` 激活 | INT8 量化精度损失，部分平台不支持 |
-| `A2C2f`（Area Attention） | 动态 shape，NPU 完全不支持 | 
-| `C2PSA`（Point-wise SA） | Attention 动态 shape，不支持 | 
-| `DFL`（reg_max=16） | softmax + gather，部分 fallback | 
+| 算子 / 模块               | 问题                              |
+| ------------------------- | --------------------------------- |
+| `SiLU` 激活               | INT8 量化精度损失，部分平台不支持 |
+| `A2C2f`（Area Attention） | 动态 shape，NPU 完全不支持        |
+| `C2PSA`（Point-wise SA）  | Attention 动态 shape，不支持      |
+| `DFL`（reg_max=16）       | softmax + gather，部分 fallback   |
 
 本项目通过**仅修改 YAML 配置**的方式，将上述模块替换为 NPU 原生支持的等效模块，估算推理延迟从 ~38ms 降至 ~13ms（RK3588，INT8，640×640）。
 
@@ -61,7 +61,7 @@
 ```python
 # ultralytics/nn/modules/conv.py
 class NPUConv(Conv):
-    """NPU-friendly Conv: Conv + BN + ReLU6"""
+    """NPU-friendly Conv: Conv + BN + ReLU6."""
 ```
 
 ---
@@ -98,31 +98,27 @@ NPU_SE_Block(x) = x × HardSigmoid(Linear₂(ReLU6(Linear₁(GAP(x)))))
 
 ### 改动文件清单
 
-| 文件 | 改动内容 |
-|------|---------|
-| `ultralytics/nn/modules/conv.py` | 新增 `NPUConv` 类 |
-| `ultralytics/nn/modules/block.py` | 新增 `NPU_C3k2`、`NPU_SE_Block`、`NPU_Bottleneck` 类 |
-| `ultralytics/nn/modules/__init__.py` | 导出新模块 |
-| `ultralytics/nn/tasks.py` | 注册新模块到 `parse_model`，新增 `elif m is NPU_C3k2` 分支 |
-| `ultralytics/models/cfg/models/12/yolo12n_npu.yaml` | NPU 友好版通用网络配置 |
-| `ultralytics/models/cfg/models/12/yolo12n_bird.yaml` | 鸟类识别轻量压缩版 |
+| 文件                                                 | 改动内容                                                   |
+| ---------------------------------------------------- | ---------------------------------------------------------- |
+| `ultralytics/nn/modules/conv.py`                     | 新增 `NPUConv` 类                                          |
+| `ultralytics/nn/modules/block.py`                    | 新增 `NPU_C3k2`、`NPU_SE_Block`、`NPU_Bottleneck` 类       |
+| `ultralytics/nn/modules/__init__.py`                 | 导出新模块                                                 |
+| `ultralytics/nn/tasks.py`                            | 注册新模块到 `parse_model`，新增 `elif m is NPU_C3k2` 分支 |
+| `ultralytics/models/cfg/models/12/yolo12n_npu.yaml`  | NPU 友好版通用网络配置                                     |
+| `ultralytics/models/cfg/models/12/yolo12n_bird.yaml` | 鸟类识别轻量压缩版                                         |
 
 ---
 
 ## 📊 消融实验结果
 
-
-
 ### CUB-200-2011 数据集（泛化参考）
 
-| 实验组 | 模型 | mAP@0.5 | mAP@0.5:95 | P | R |
-|--------|------|---------|-----------|---|---|
-| Baseline | yolov12n | 0.820 | 0.728 | 0.789 | 0.765 |
-| Exp-A | yolov12n_npu | 0.733 | 0.613 | 0.721 | 0.672 |
-| Exp-B | yolo12_npu_cc | 0.716 | 0.592 | 0.694 | 0.654 |
-| Final | yolo12_npu_bird | 0.669 | 0.547 | 0.652 | 0.625 |
-
-
+| 实验组   | 模型            | mAP@0.5 | mAP@0.5:95 | P     | R     |
+| -------- | --------------- | ------- | ---------- | ----- | ----- |
+| Baseline | yolov12n        | 0.820   | 0.728      | 0.789 | 0.765 |
+| Exp-A    | yolov12n_npu    | 0.733   | 0.613      | 0.721 | 0.672 |
+| Exp-B    | yolo12_npu_cc   | 0.716   | 0.592      | 0.694 | 0.654 |
+| Final    | yolo12_npu_bird | 0.669   | 0.547      | 0.652 | 0.625 |
 
 ---
 
@@ -156,7 +152,7 @@ pip install thop torchinfo
 pip install onnx onnx-simplifier onnxruntime
 
 # RK3588 部署（需在 Linux 环境安装）
-pip install rknn-toolkit2  # 参考官方文档
+pip install rknn-toolkit2 # 参考官方文档
 ```
 
 ---
@@ -195,7 +191,7 @@ model.train(
     data="birds.yaml",  # 你的鸟类数据集配置
     epochs=300,
     imgsz=640,
-    nc=200,             # 修改为实际类别数
+    nc=200,  # 修改为实际类别数
 )
 ```
 
@@ -209,6 +205,7 @@ model = DetectionModel(cfg=yaml_path, nc=200)
 
 # 打印参数量、GFLOPs
 from ultralytics.utils.torch_utils import model_info
+
 model_info(model, imgsz=640, verbose=True)
 ```
 
@@ -230,12 +227,12 @@ print(f"mAP50-95 : {metrics.box.map:.4f}")
 
 本仓库提供以下 YAML 配置，位于 `ultralytics/models/cfg/models/12/`：
 
-| 文件 | 描述 | Params | GFLOPs | 适用场景 |
-|------|------|--------|--------|---------|
-| `yolo12n.yaml` | 原版 YOLOv12n（未改动） | 2.65M | 6.8 | GPU 训练基线 |
-| `yolo12n_npu.yaml` | NPU 友好版（算子替换） | 2.49M | 7.8 | NPU 部署通用场景 |
-| `yolo12n_npu_cc.yaml` | NPU + 通道压缩版 | 1.44M | 6.6 | 资源受限边缘设备 |
-| `yolo12n_bird.yaml` | 鸟类识别轻量版 | 1.12M | 6.1 | 鸟类/细粒度识别专用 |
+| 文件                  | 描述                    | Params | GFLOPs | 适用场景            |
+| --------------------- | ----------------------- | ------ | ------ | ------------------- |
+| `yolo12n.yaml`        | 原版 YOLOv12n（未改动） | 2.65M  | 6.8    | GPU 训练基线        |
+| `yolo12n_npu.yaml`    | NPU 友好版（算子替换）  | 2.49M  | 7.8    | NPU 部署通用场景    |
+| `yolo12n_npu_cc.yaml` | NPU + 通道压缩版        | 1.44M  | 6.6    | 资源受限边缘设备    |
+| `yolo12n_bird.yaml`   | 鸟类识别轻量版          | 1.12M  | 6.1    | 鸟类/细粒度识别专用 |
 
 ### yaml 改动原则速查
 
@@ -263,10 +260,10 @@ C2PSA      →  NPU_SE_Block  # 删除 PSA，换轻量 SE
 
 ```bash
 python export_onnx.py \
-    --model path/to/best.pt \
-    --output ./export \
-    --imgsz 640 \
-    --opset 13
+  --model path/to/best.pt \
+  --output ./export \
+  --imgsz 640 \
+  --opset 13
 ```
 
 或使用 Python API：
@@ -280,16 +277,17 @@ model.export(
     imgsz=640,
     opset=13,
     simplify=True,
-    dynamic=False,   # NPU 部署必须静态 shape
+    dynamic=False,  # NPU 部署必须静态 shape
 )
 ```
 
 ### RK3588 模型转换（RKNN）
 
 参考rknn_tools/convert2rknn.py或者rk官方的onnx2rknn.py，转换完成后进行使用inference_rknn_val.py进行评估。
+
 ### RK3588 模型部署
 
-板卡部署可以参考rknn_tools/yolo_infer.py  
+板卡部署可以参考rknn_tools/yolo_infer.py
 
 ## 🗂 项目结构
 
@@ -308,7 +306,7 @@ yolo12-rknn-npu/
 │       ├── yolo12n_npu_cc.yaml  # NPU + 压缩版
 │       └── yolo12n_bird.yaml    # 鸟类轻量版
 ├── rknn_tools
-│   ├── inference..           
+│   ├── inference..
 │       ├── ..         # RKNN 导出脚本
 │   ├── yolo_infer.py           # RK3588 推理脚本
 │   └── 其他板卡推理脚本..         # 统一推理（兼容原版/NPU Detect）
