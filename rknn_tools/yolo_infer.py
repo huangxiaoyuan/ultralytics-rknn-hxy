@@ -1,21 +1,20 @@
-import os
-import time
-import sys
-import numpy as np
-import cv2
 import platform
+import time
+
+import cv2
+import numpy as np
 from rknnlite.api import RKNNLite
 
 # ─── 模型路径配置 ────────────────────────────────────────────────
-RK3566_RK3568_RKNN_MODEL = 'yolov5s_for_rk3566_rk3568.rknn'
-RK3588_RKNN_MODEL        = 'bird_rknn_model/yolov12-bird-320_rk3588.rknn'
-RK3562_RKNN_MODEL        = 'yolov5s_for_rk3562.rknn'
-IMG_PATH                 = 'platalea_minor.jpg'
+RK3566_RK3568_RKNN_MODEL = "yolov5s_for_rk3566_rk3568.rknn"
+RK3588_RKNN_MODEL = "bird_rknn_model/yolov12-bird-320_rk3588.rknn"
+RK3562_RKNN_MODEL = "yolov5s_for_rk3562.rknn"
+IMG_PATH = "platalea_minor.jpg"
 
 # ─── 推理参数 ────────────────────────────────────────────────────
-OBJ_THRESH = 0.5      # 置信度阈值（严格大于，过滤 sigmoid(0)=0.5 的噪声）
-NMS_THRESH = 0.45     # NMS IoU 阈值
-IMG_SIZE   = 320      # 输入分辨率
+OBJ_THRESH = 0.5  # 置信度阈值（严格大于，过滤 sigmoid(0)=0.5 的噪声）
+NMS_THRESH = 0.45  # NMS IoU 阈值
+IMG_SIZE = 320  # 输入分辨率
 
 # ─── 类别列表 ────────────────────────────────────────────────────
 CLASSES = (
@@ -45,26 +44,26 @@ CLASSES = (
     "platalea_minor",
 )
 
-DEVICE_COMPATIBLE_NODE = '/proc/device-tree/compatible'
+DEVICE_COMPATIBLE_NODE = "/proc/device-tree/compatible"
 
 
 # ─── 设备检测 ────────────────────────────────────────────────────
 def get_host():
     system = platform.system()
     machine = platform.machine()
-    os_machine = system + '-' + machine
-    if os_machine == 'Linux-aarch64':
+    os_machine = system + "-" + machine
+    if os_machine == "Linux-aarch64":
         try:
             with open(DEVICE_COMPATIBLE_NODE) as f:
                 device_compatible_str = f.read()
-                if 'rk3588' in device_compatible_str:
-                    host = 'RK3588'
-                elif 'rk3562' in device_compatible_str:
-                    host = 'RK3562'
+                if "rk3588" in device_compatible_str:
+                    host = "RK3588"
+                elif "rk3562" in device_compatible_str:
+                    host = "RK3562"
                 else:
-                    host = 'RK3566_RK3568'
-        except IOError:
-            print('Read device node {} failed.'.format(DEVICE_COMPATIBLE_NODE))
+                    host = "RK3566_RK3568"
+        except OSError:
+            print(f"Read device node {DEVICE_COMPATIBLE_NODE} failed.")
             exit(-1)
     else:
         host = os_machine
@@ -73,7 +72,7 @@ def get_host():
 
 # ─── 工具函数 ────────────────────────────────────────────────────
 def xywh2xyxy(x):
-    """将 [cx, cy, w, h] 转换为 [x1, y1, x2, y2]"""
+    """将 [cx, cy, w, h] 转换为 [x1, y1, x2, y2]."""
     y = np.copy(x)
     y[:, 0] = x[:, 0] - x[:, 2] / 2
     y[:, 1] = x[:, 1] - x[:, 3] / 2
@@ -83,7 +82,7 @@ def xywh2xyxy(x):
 
 
 def nms_boxes(boxes, scores):
-    """非极大值抑制"""
+    """非极大值抑制."""
     x = boxes[:, 0]
     y = boxes[:, 1]
     w = boxes[:, 2] - boxes[:, 0]
@@ -111,16 +110,12 @@ def nms_boxes(boxes, scores):
 
 # ─── YOLOv12 单头后处理 ──────────────────────────────────────────
 def yolov12_post_process(output, conf_thresh=OBJ_THRESH, nms_thresh=NMS_THRESH):
+    """输入: output[0] shape = (1, 28, 2100) - 4 个坐标 (cx, cy, w, h) - 24 个类别 logits 输出: boxes (xyxy), classes, scores.
     """
-    输入: output[0] shape = (1, 28, 2100)
-      - 4 个坐标 (cx, cy, w, h)
-      - 24 个类别 logits
-    输出: boxes (xyxy), classes, scores
-    """
-    pred = output[0][0]               # (28, 2100)
-    pred = pred.transpose(1, 0)       # (2100, 28)
+    pred = output[0][0]  # (28, 2100)
+    pred = pred.transpose(1, 0)  # (2100, 28)
 
-    boxes_xywh  = pred[:, :4]
+    boxes_xywh = pred[:, :4]
     class_logits = pred[:, 4:]
     class_scores = 1 / (1 + np.exp(-class_logits))  # sigmoid
 
@@ -129,9 +124,9 @@ def yolov12_post_process(output, conf_thresh=OBJ_THRESH, nms_thresh=NMS_THRESH):
 
     # 严格大于阈值，过滤 sigmoid(0)=0.5 的量化噪声
     mask = class_max_score > conf_thresh
-    boxes_xywh      = boxes_xywh[mask]
+    boxes_xywh = boxes_xywh[mask]
     class_max_score = class_max_score[mask]
-    classes         = classes[mask]
+    classes = classes[mask]
 
     if len(boxes_xywh) == 0:
         return None, None, None
@@ -155,59 +150,58 @@ def yolov12_post_process(output, conf_thresh=OBJ_THRESH, nms_thresh=NMS_THRESH):
 def draw(image, boxes, scores, classes):
     for box, score, cl in zip(boxes, scores, classes):
         x1, y1, x2, y2 = int(box[0]), int(box[1]), int(box[2]), int(box[3])
-        print('class: {}, score: {:.4f}'.format(CLASSES[cl], score))
-        print('box x1,y1,x2,y2: [{}, {}, {}, {}]'.format(x1, y1, x2, y2))
+        print(f"class: {CLASSES[cl]}, score: {score:.4f}")
+        print(f"box x1,y1,x2,y2: [{x1}, {y1}, {x2}, {y2}]")
         cv2.rectangle(image, (x1, y1), (x2, y2), (255, 0, 0), 2)
-        cv2.putText(image, '{} {:.2f}'.format(CLASSES[cl], score),
-                    (x1, max(y1 - 6, 10)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+        cv2.putText(
+            image, f"{CLASSES[cl]} {score:.2f}", (x1, max(y1 - 6, 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2
+        )
 
 
 # ─── 主程序 ──────────────────────────────────────────────────────
-if __name__ == '__main__':
-
+if __name__ == "__main__":
     host_name = get_host()
-    if host_name == 'RK3566_RK3568':
+    if host_name == "RK3566_RK3568":
         rknn_model = RK3566_RK3568_RKNN_MODEL
-    elif host_name == 'RK3562':
+    elif host_name == "RK3562":
         rknn_model = RK3562_RKNN_MODEL
-    elif host_name == 'RK3588':
+    elif host_name == "RK3588":
         rknn_model = RK3588_RKNN_MODEL
     else:
-        print("This demo cannot run on the current platform: {}".format(host_name))
+        print(f"This demo cannot run on the current platform: {host_name}")
         exit(-1)
 
     rknn_lite = RKNNLite()
 
-    print('--> Load RKNN model')
+    print("--> Load RKNN model")
     ret = rknn_lite.load_rknn(rknn_model)
     if ret != 0:
-        print('Load RKNN model failed')
+        print("Load RKNN model failed")
         exit(ret)
-    print('done')
+    print("done")
 
-    print('--> Init runtime environment')
-    if host_name == 'RK3588':
+    print("--> Init runtime environment")
+    if host_name == "RK3588":
         ret = rknn_lite.init_runtime(core_mask=RKNNLite.NPU_CORE_0)
     else:
         ret = rknn_lite.init_runtime()
     if ret != 0:
-        print('Init runtime environment failed!')
+        print("Init runtime environment failed!")
         exit(ret)
-    print('done')
+    print("done")
 
     # 图像预处理
     img = cv2.imread(IMG_PATH)
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     img = cv2.resize(img, (IMG_SIZE, IMG_SIZE))
-    img = np.expand_dims(img, 0)   # (1, 320, 320, 3) NHWC
+    img = np.expand_dims(img, 0)  # (1, 320, 320, 3) NHWC
 
     # 推理
-    print('--> Running model')
+    print("--> Running model")
     t0 = time.time()
     outputs = rknn_lite.inference(inputs=[img])
-    print('Inference time: {:.1f} ms'.format((time.time() - t0) * 1000))
-    print('done')
+    print(f"Inference time: {(time.time() - t0) * 1000:.1f} ms")
+    print("done")
 
     # 后处理
     boxes, classes, scores = yolov12_post_process(outputs)
@@ -217,9 +211,9 @@ if __name__ == '__main__':
     if boxes is not None:
         draw(img_out, boxes, scores, classes)
     else:
-        print('No objects detected.')
+        print("No objects detected.")
 
-    cv2.imwrite('result.jpg', img_out)
-    print('Result saved to result.jpg')
+    cv2.imwrite("result.jpg", img_out)
+    print("Result saved to result.jpg")
 
     rknn_lite.release()
