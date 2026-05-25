@@ -9,7 +9,7 @@ import torch.nn.functional as F
 
 from ultralytics.utils.torch_utils import fuse_conv_and_bn
 
-from .conv import Conv, DWConv, GhostConv, LightConv, RepConv, autopad, NPUConv
+from .conv import Conv, DWConv, GhostConv, LightConv, NPUConv, RepConv, autopad
 from .transformer import TransformerBlock
 
 __all__ = (
@@ -1108,9 +1108,7 @@ class C3k2(C2f):
 
 # ============ 修改后：NPU-C3k2 ============
 class NPU_C3k2(nn.Module):
-    """
-    参数顺序必须是: c1, c2, n, shortcut, g, e
-    parse_model 会传入: [c1, c2, n, shortcut]
+    """参数顺序必须是: c1, c2, n, shortcut, g, e parse_model 会传入: [c1, c2, n, shortcut].
     """
 
     def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5):
@@ -1124,9 +1122,7 @@ class NPU_C3k2(nn.Module):
         self.cv1 = NPUConv(c1, 2 * self.c, 1, 1)
         self.cv2 = NPUConv((2 + n) * self.c, c2, 1)
         self.se = NPU_SE_Block(c2)
-        self.m = nn.ModuleList(
-            NPU_Bottleneck(self.c, self.c, shortcut, g) for _ in range(n)
-        )
+        self.m = nn.ModuleList(NPU_Bottleneck(self.c, self.c, shortcut, g) for _ in range(n))
 
     def forward(self, x):
         y = list(self.cv1(x).split((self.c, self.c), 1))
@@ -1171,6 +1167,7 @@ class NPU_Bottleneck(nn.Module):
 
     def forward(self, x):
         return x + self.cv2(self.cv1(x)) if self.add else self.cv2(self.cv1(x))
+
 
 class C3k(C3):
     """C3k is a CSP bottleneck module with customizable kernel sizes for feature extraction in neural networks."""
@@ -1501,10 +1498,7 @@ class PSA(nn.Module):
 
 # ============ 替换方案：SE注意力（NPU友好）============
 class NPU_SE_Block(nn.Module):
-    """
-    Squeeze-and-Excitation替代PSA
-    全部由 GlobalAvgPool + FC + ReLU6/HardSigmoid 构成
-    RK3588 NPU完全支持，无需fallback CPU
+    """Squeeze-and-Excitation替代PSA 全部由 GlobalAvgPool + FC + ReLU6/HardSigmoid 构成 RK3588 NPU完全支持，无需fallback CPU.
     """
 
     def __init__(self, c, ratio=16):
@@ -1524,6 +1518,7 @@ class NPU_SE_Block(nn.Module):
         scale = self.squeeze(x)
         scale = self.excitation(scale).view(b, c, 1, 1)
         return x * scale
+
 
 class C2PSA(nn.Module):
     """C2PSA module with attention mechanism for enhanced feature extraction and processing.

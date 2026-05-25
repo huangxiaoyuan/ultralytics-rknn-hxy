@@ -55,6 +55,10 @@ from ultralytics.nn.modules import (
     ImagePoolingAttn,
     Index,
     LRPCHead,
+    NPU_C3k2,  # ← 新增
+    NPU_Detect,  # ← 新增
+    NPU_SE_Block,  # ← 新增
+    NPUConv,  # ← 新增
     Pose,
     Pose26,
     RepC3,
@@ -72,11 +76,6 @@ from ultralytics.nn.modules import (
     YOLOESegment,
     YOLOESegment26,
     v10Detect,
-    NPUConv,        # ← 新增
-    NPU_C3k2,       # ← 新增
-    NPU_SE_Block,   # ← 新增
-    NPU_Bottleneck, # ← 新增
-    NPU_Detect,     # ← 新增
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, LOGGER, WINDOWS, YAML, colorstr, emojis
 from ultralytics.utils.checks import check_requirements, check_suffix, check_yaml
@@ -1633,7 +1632,6 @@ def parse_model(d, ch, verbose=True):
             C2fCIB,
             C2PSA,
             A2C2f,
-
         }
     )
     for i, (f, n, m, args) in enumerate(d["backbone"] + d["head"]):  # from, number, module, args
@@ -1714,13 +1712,24 @@ def parse_model(d, ch, verbose=True):
                 OBB,
                 OBB26,
                 NPU_Detect,
-
             }
         ):
             args.extend([reg_max, end2end, [ch[x] for x in f]])
             if m is Segment or m is YOLOESegment or m is Segment26 or m is YOLOESegment26:
                 args[2] = make_divisible(min(args[2], max_channels) * width, 8)
-            if m in {Detect, YOLOEDetect, Segment, Segment26, YOLOESegment, YOLOESegment26, Pose, Pose26, OBB, OBB26, NPU_Detect}:
+            if m in {
+                Detect,
+                YOLOEDetect,
+                Segment,
+                Segment26,
+                YOLOESegment,
+                YOLOESegment26,
+                Pose,
+                Pose26,
+                OBB,
+                OBB26,
+                NPU_Detect,
+            }:
                 m.legacy = legacy
         elif m is v10Detect:
             args.append([ch[x] for x in f])
