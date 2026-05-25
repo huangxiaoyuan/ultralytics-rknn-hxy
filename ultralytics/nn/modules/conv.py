@@ -100,6 +100,7 @@ class Conv(nn.Module):
         self.conv = nn.Conv2d(c1, c2, k, s, autopad(k, p, d), groups=g, dilation=d, bias=False)
         self.bn = nn.BatchNorm2d(c2)
         self.act = self.default_act if act is True else act if isinstance(act, nn.Module) else nn.Identity()
+
     def forward(self, x):
         """Apply convolution, batch normalization and activation to input tensor.
 
@@ -122,16 +123,20 @@ class Conv(nn.Module):
         """
         return self.act(self.conv(x))
 
+
 # 🔑 新增：硬件感知卷积，BN层融合接口
 class NPUConv(Conv):
-    """专为RK3588 NPU设计的卷积块"""
+    """专为RK3588 NPU设计的卷积块."""
+
     def __init__(self, c1, c2, k=1, s=1, p=None, g=1):
         # 🔑 所有参数强制转int，彻底避免tuple/float传入
         c1, c2, k, s = int(c1), int(c2), int(k), int(s)
         g = int(g)
         super().__init__(c1, c2, k, s, p, g, act=nn.ReLU6())
+
     def forward_fuse(self, x):
         return self.act(self.conv(x))
+
 
 class Conv2(Conv):
     """Simplified RepConv module with Conv fusing.
