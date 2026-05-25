@@ -6,11 +6,10 @@
 # └── datasets
 #     └── coco  ← downloads here (20.1 GB)
 
-
 # Train/val/test sets as 1) dir: path/to/imgs, 2) file: path/to/imgs.txt, or 3) list: [path/to/imgs1, path/to/imgs2, ..]
-path: /data/CUB_200_2011_dataset  # dataset root dir
+path: /data/CUB_200_2011_dataset # dataset root dir
 train: images/train
-val:   images/val
+val: images/val
 #test:  images/test   # 没有测试集可以删掉这行
 
 # 类别数量
@@ -218,10 +217,6 @@ names:
   197: Rock_Wren
   198: Winter_Wren
   199: Common_Yellowthroat
-
-
-
-
 # Download script/URL (optional)
 #download: |
 #  from ultralytics.utils.downloads import download
