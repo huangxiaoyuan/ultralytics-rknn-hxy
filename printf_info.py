@@ -1,9 +1,8 @@
 # printf_info.py
-import torch
 from ultralytics.nn.tasks import DetectionModel
 from ultralytics.utils.torch_utils import model_info
 
-yaml_path = r'E:\yolo-rknn\ultralytics\cfg\models\12\yolo12n_npu_h.yaml'
+yaml_path = r"E:\yolo-rknn\ultralytics\cfg\models\12\yolo12n_npu_h.yaml"
 
 # 构建模型
 model = DetectionModel(cfg=yaml_path, nc=24)
@@ -13,20 +12,20 @@ model.eval()
 model_info(model, imgsz=640, verbose=True)
 
 # ── 2. 逐层参数统计 ──
-print("\n" + "="*70)
+print("\n" + "=" * 70)
 print(f"{'Layer':<5} {'Type':<40} {'Params':>10} {'Trainable':>10}")
-print("="*70)
+print("=" * 70)
 total, trainable = 0, 0
 for i, (name, param) in enumerate(model.named_parameters()):
-    total     += param.numel()
+    total += param.numel()
     trainable += param.numel() if param.requires_grad else 0
 for i, layer in enumerate(model.model):
     lp = sum(p.numel() for p in layer.parameters())
-    print(f"{i:<5} {str(type(layer).__name__):<40} {lp:>10,}")
-print("="*70)
+    print(f"{i:<5} {type(layer).__name__!s:<40} {lp:>10,}")
+print("=" * 70)
 print(f"{'Total params':<46} {total:>10,}")
 print(f"{'Trainable params':<46} {trainable:>10,}")
-print(f"{'Non-trainable params':<46} {total-trainable:>10,}")
+print(f"{'Non-trainable params':<46} {total - trainable:>10,}")
 
 # # ── 3. 手动计算 FLOPs（用 thop）──
 # print("\n" + "="*70)
