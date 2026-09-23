@@ -32,7 +32,7 @@ from ultralytics.models.yolo.detect import DetectionTrainer
 class CustomTrainer(DetectionTrainer):
     """A custom trainer that extends DetectionTrainer with additional functionality."""
 
-    pass  # Add your customizations here
+    # Add your customizations here
 
 
 model = YOLO("yolo26n.pt")
@@ -90,15 +90,15 @@ This logs the mean F1 score across all classes and a per-class breakdown after e
 
     The validator provides access to many metrics through `self.validator.metrics.box`:
 
-    | Attribute | Description |
-    |---|---|
-    | `f1` | F1 score per class |
-    | `p` | Precision per class |
-    | `r` | Recall per class |
-    | `ap50` | AP at IoU 0.5 per class |
-    | `ap` | AP at IoU 0.5:0.95 per class |
-    | `mp`, `mr` | Mean precision and recall |
-    | `map50`, `map` | Mean AP metrics |
+    | Attribute      | Description                  |
+    | -------------- | ---------------------------- |
+    | `f1`           | F1 score per class           |
+    | `p`            | Precision per class          |
+    | `r`            | Recall per class             |
+    | `ap50`         | AP at IoU 0.5 per class      |
+    | `ap`           | AP at IoU 0.5:0.95 per class |
+    | `mp`, `mr`     | Mean precision and recall    |
+    | `map50`, `map` | Mean AP metrics              |
 
 ## Adding Class Weights
 
@@ -212,12 +212,12 @@ model.train(data="coco8.yaml", epochs=20, trainer=CustomSaveTrainer)
 
     Common metrics available in `self.metrics` after validation include:
 
-    | Key | Description |
-    |---|---|
-    | `metrics/precision(B)` | Precision |
-    | `metrics/recall(B)` | Recall |
-    | `metrics/mAP50(B)` | mAP at IoU 0.5 |
-    | `metrics/mAP50-95(B)` | mAP at IoU 0.5:0.95 |
+    | Key                    | Description         |
+    | ---------------------- | ------------------- |
+    | `metrics/precision(B)` | Precision           |
+    | `metrics/recall(B)`    | Recall              |
+    | `metrics/mAP50(B)`     | mAP at IoU 0.5      |
+    | `metrics/mAP50-95(B)`  | mAP at IoU 0.5:0.95 |
 
 ## Freezing and Unfreezing the Backbone
 
