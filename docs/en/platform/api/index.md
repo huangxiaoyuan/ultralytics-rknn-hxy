@@ -1767,11 +1767,11 @@ POST /api/members
 
 !!! info "Member Roles"
 
-    | Role     | Permissions                                |
-    | -------- | ------------------------------------------ |
-    | `viewer` | Read-only access to workspace resources    |
-    | `editor` | Create, edit, and delete resources          |
-    | `admin`  | Full access including member management     |
+    | Role     | Permissions                             |
+    | -------- | --------------------------------------- |
+    | `viewer` | Read-only access to workspace resources |
+    | `editor` | Create, edit, and delete resources      |
+    | `admin`  | Full access including member management |
 
     See [Teams](../account/settings.md#teams-tab) for role details in the UI.
 
