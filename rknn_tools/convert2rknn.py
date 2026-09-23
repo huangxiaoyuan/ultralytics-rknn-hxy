@@ -1,6 +1,8 @@
-#安装了rknn toolkit使用
+# 安装了rknn toolkit使用
+
+import sys
+
 from rknn.api import RKNN
-import os
 
 # 配置路径
 ONNX_PATH = "yolo11s.onnx"  # 输入ONNX模型
@@ -20,11 +22,11 @@ def main():
         inputs=["images"],  # YOLO11的输入节点名固定为images
         input_size_list=[[3, 640, 640]],  # NCHW格式
         mean_values=[[0, 0, 0]],  # 归一化均值（YOLO11用0）
-        std_values=[[255, 255, 255]]  # 归一化标准差（YOLO11用255，对应输入除以255）
+        std_values=[[255, 255, 255]],  # 归一化标准差（YOLO11用255，对应输入除以255）
     )
     if ret != 0:
         print("加载ONNX模型失败！")
-        exit(ret)
+        sys.exit(ret)
 
     # 3. 配置NPU运行参数（针对RK3588优化）
     print("=== 配置模型参数 ===")
@@ -42,29 +44,30 @@ def main():
     ret = rknn.build(
         do_quantization=True,  # 开启INT8量化
         dataset=CALIB_PATH,  # 校准数据集
-        quantized_dtype="int8"  # 量化类型
+        quantized_dtype="int8",  # 量化类型
     )
     if ret != 0:
         print("构建模型失败！")
-        exit(ret)
+        sys.exit(ret)
 
     # 5. 导出RKNN模型
     print("=== 导出RKNN模型 ===")
     ret = rknn.export_rknn(RKNN_PATH)
     if ret != 0:
         print("导出模型失败！")
-        exit(ret)
+        sys.exit(ret)
 
     # 6. 可选：测试模型在NPU上的推理效果（验证精度）
     print("=== 初始化运行时 ===")
     ret = rknn.init_runtime()
     if ret != 0:
         print("初始化运行时失败！")
-        exit(ret)
+        sys.exit(ret)
 
     # 用一张测试图验证（可选）
     import cv2
     import numpy as np
+
     img = cv2.imread("calib_images/00000000100.jpg")  # 随便选一张校准图
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     img = cv2.resize(img, (640, 640))
