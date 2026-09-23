@@ -244,16 +244,16 @@ Once deployed, call your endpoint from any language:
 
 !!! info "Plan Tiers"
 
-    | Feature              | Free           | Pro ($29/mo)        | Enterprise     |
-    | -------------------- | -------------- | ------------------- | -------------- |
-    | Signup Credit        | $5 / $25*      | -                   | Custom         |
-    | Monthly Credit       | -              | $30/seat/month      | Custom         |
-    | Models               | 100            | 500                 | Unlimited      |
-    | Concurrent Trainings | 3              | 10                  | Unlimited      |
-    | Deployments          | 3              | 10 (warm-start)     | Unlimited      |
-    | Storage              | 100 GB         | 500 GB              | Unlimited      |
-    | Teams                | -              | Up to 5 members     | Up to 50       |
-    | Support              | Community      | Priority            | Dedicated      |
+    | Feature              | Free      | Pro ($29/mo)    | Enterprise |
+    | -------------------- | --------- | --------------- | ---------- |
+    | Signup Credit        | $5 / $25* | -               | Custom     |
+    | Monthly Credit       | -         | $30/seat/month  | Custom     |
+    | Models               | 100       | 500             | Unlimited  |
+    | Concurrent Trainings | 3         | 10              | Unlimited  |
+    | Deployments          | 3         | 10 (warm-start) | Unlimited  |
+    | Storage              | 100 GB    | 500 GB          | Unlimited  |
+    | Teams                | -         | Up to 5 members | Up to 50   |
+    | Support              | Community | Priority        | Dedicated  |
 
     *$5 at signup, or $25 with a verified company/work email.
 
