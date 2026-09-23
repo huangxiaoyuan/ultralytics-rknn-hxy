@@ -84,28 +84,28 @@ Each item displays:
 
 === "Project Cards"
 
-    | Element              | Description                                                   |
-    | -------------------- | ------------------------------------------------------------- |
-    | **Icon**             | Project icon with custom colors                               |
-    | **Name**             | Project title                                                 |
-    | **Creator**          | Author avatar and username                                    |
-    | **Description**      | Short project description                                     |
-    | **Model Count**      | Number of models in the project                               |
-    | **Model Tags**       | Names of models in the project                                |
-    | **Visibility Badge** | Public or private indicator (shows lock icon for private)     |
-    | **Star Count**       | Number of community stars                                     |
+    | Element              | Description                                               |
+    | -------------------- | --------------------------------------------------------- |
+    | **Icon**             | Project icon with custom colors                           |
+    | **Name**             | Project title                                             |
+    | **Creator**          | Author avatar and username                                |
+    | **Description**      | Short project description                                 |
+    | **Model Count**      | Number of models in the project                           |
+    | **Model Tags**       | Names of models in the project                            |
+    | **Visibility Badge** | Public or private indicator (shows lock icon for private) |
+    | **Star Count**       | Number of community stars                                 |
 
 === "Dataset Cards"
 
-    | Element              | Description                                                   |
-    | -------------------- | ------------------------------------------------------------- |
-    | **Thumbnails**       | Preview images from the dataset                               |
-    | **Name**             | Dataset title                                                 |
-    | **Creator**          | Author avatar and username                                    |
-    | **Task Badge**       | YOLO task type (detect, segment, etc.)                        |
-    | **Image Count**      | Number of images in the dataset                               |
-    | **Visibility Badge** | Public or private indicator (shows lock icon for private)     |
-    | **Star Count**       | Number of community stars                                     |
+    | Element              | Description                                               |
+    | -------------------- | --------------------------------------------------------- |
+    | **Thumbnails**       | Preview images from the dataset                           |
+    | **Name**             | Dataset title                                             |
+    | **Creator**          | Author avatar and username                                |
+    | **Task Badge**       | YOLO task type (detect, segment, etc.)                    |
+    | **Image Count**      | Number of images in the dataset                           |
+    | **Visibility Badge** | Public or private indicator (shows lock icon for private) |
+    | **Star Count**       | Number of community stars                                 |
 
 ## Use Public Content
 
