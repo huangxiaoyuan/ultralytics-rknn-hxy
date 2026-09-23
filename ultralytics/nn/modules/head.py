@@ -7,8 +7,8 @@ import copy
 import math
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
 from torch.nn.init import constant_, xavier_uniform_
 
 from ultralytics.utils import NOT_MACOS14
@@ -16,7 +16,7 @@ from ultralytics.utils.tal import dist2bbox, dist2rbox, make_anchors
 from ultralytics.utils.torch_utils import TORCH_1_11, fuse_conv_and_bn, smart_inference_mode
 
 from .block import DFL, SAVPE, BNContrastiveHead, ContrastiveHead, Proto, Proto26, RealNVP, Residual, SwiGLUFFN
-from .conv import Conv, DWConv, NPUConv
+from .conv import Conv, DWConv
 from .transformer import MLP, DeformableTransformerDecoder, DeformableTransformerDecoderLayer
 from .utils import bias_init_with_prob, linear_init
 
@@ -115,12 +115,12 @@ class Detect(nn.Module):
     @property
     def one2many(self):
         """Returns the one-to-many head components, here for v3/v5/v8/v9/v11 backward compatibility."""
-        return dict(box_head=self.cv2, cls_head=self.cv3)
+        return {"box_head": self.cv2, "cls_head": self.cv3}
 
     @property
     def one2one(self):
         """Returns the one-to-one head components."""
-        return dict(box_head=self.one2one_cv2, cls_head=self.one2one_cv3)
+        return {"box_head": self.one2one_cv2, "cls_head": self.one2one_cv3}
 
     @property
     def end2end(self):
@@ -137,11 +137,11 @@ class Detect(nn.Module):
     ) -> dict[str, torch.Tensor]:
         """Concatenates and returns predicted bounding boxes and class probabilities."""
         if box_head is None or cls_head is None:  # for fused inference
-            return dict()
+            return {}
         bs = x[0].shape[0]  # batch size
         boxes = torch.cat([box_head[i](x[i]).view(bs, 4 * self.reg_max, -1) for i in range(self.nl)], dim=-1)
         scores = torch.cat([cls_head[i](x[i]).view(bs, self.nc, -1) for i in range(self.nl)], dim=-1)
-        return dict(boxes=boxes, scores=scores, feats=x)
+        return {"boxes": boxes, "scores": scores, "feats": x}
 
     def forward(
         self, x: list[torch.Tensor]
@@ -255,13 +255,12 @@ class Detect(nn.Module):
 # 模型侧：NPU_Detect
 # ─────────────────────────────────────────────────────────────────────────────
 
-class NPU_Detect(Detect):
-    """
-    NPU 友好检测头，解决父类 forward 中三类 NPU 不友好操作：
 
-    问题1  self.dfl        → 父类 DFL 含动态 reshape，替换为 StaticDFL（reg_max>1时）
-    问题2  make_anchors    → 动态 anchor 生成，含条件分支，完全移到 CPU
-    问题3  dist2bbox/sigmoid → 坐标解码和激活，完全移到 CPU
+class NPU_Detect(Detect):
+    """NPU 友好检测头，解决父类 forward 中三类 NPU 不友好操作：.
+
+    问题1 self.dfl → 父类 DFL 含动态 reshape，替换为 StaticDFL（reg_max>1时） 问题2 make_anchors → 动态 anchor 生成，含条件分支，完全移到 CPU 问题3
+    dist2bbox/sigmoid → 坐标解码和激活，完全移到 CPU
 
     导出后模型输出两个张量（静态 shape）：
         boxes:  (B, reg_max*4, N)   原始 dist 格式，未做 DFL/解码
@@ -275,41 +274,36 @@ class NPU_Detect(Detect):
         super().__init__(nc=nc, reg_max=reg_max, end2end=False, ch=ch)
 
         if self.reg_max > 1:
-            self.dfl = StaticDFL(self.reg_max)   # 替换动态 DFL
+            self.dfl = StaticDFL(self.reg_max)  # 替换动态 DFL
         # reg_max==1 时 dfl 已经是 nn.Identity()，天然静态
 
     def forward(self, x: list):
-        """
-        只做卷积特征提取，拼接后直接返回原始输出，
-        不做 anchor 生成、dist2bbox、sigmoid。
-        返回: (boxes, scores)
-            boxes  shape: (B, reg_max*4, N)
-            scores shape: (B, nc, N)
+        """只做卷积特征提取，拼接后直接返回原始输出， 不做 anchor 生成、dist2bbox、sigmoid。 返回: (boxes, scores) boxes shape: (B, reg_max*4, N)
+        scores shape: (B, nc, N).
         """
         bs = x[0].shape[0]
 
-        raw_boxes_list  = []
+        raw_boxes_list = []
         raw_scores_list = []
 
         for i in range(self.nl):
             # cv2 → box 分支，cv3 → cls 分支
-            box_feat = self.cv2[i](x[i])   # (B, reg_max*4, Hi, Wi)
-            cls_feat = self.cv3[i](x[i])   # (B, nc, Hi, Wi)
+            box_feat = self.cv2[i](x[i])  # (B, reg_max*4, Hi, Wi)
+            cls_feat = self.cv3[i](x[i])  # (B, nc, Hi, Wi)
 
             raw_boxes_list.append(box_feat.view(bs, self.reg_max * 4, -1))
             raw_scores_list.append(cls_feat.view(bs, self.nc, -1))
 
-        boxes  = torch.cat(raw_boxes_list,  dim=-1)   # (B, reg_max*4, N)
-        scores = torch.cat(raw_scores_list, dim=-1)   # (B, nc, N)
+        boxes = torch.cat(raw_boxes_list, dim=-1)  # (B, reg_max*4, N)
+        scores = torch.cat(raw_scores_list, dim=-1)  # (B, nc, N)
 
         return boxes, scores
 
 
 class StaticDFL(nn.Module):
+    """静态 DFL：用固定 weight 的 Conv1d 替代动态 reshape+softmax+matmul， shape 在 export 时完全静态，对 RKNN/TensorRT 友好。.
     """
-    静态 DFL：用固定 weight 的 Conv1d 替代动态 reshape+softmax+matmul，
-    shape 在 export 时完全静态，对 RKNN/TensorRT 友好。
-    """
+
     def __init__(self, reg_max: int = 16):
         super().__init__()
         self.reg_max = reg_max
@@ -318,64 +312,59 @@ class StaticDFL(nn.Module):
         nn.init.constant_(self.conv.weight, 0.0)
         with torch.no_grad():
             w = torch.arange(reg_max, dtype=torch.float32)
-            self.conv.weight.data[0, :, 0] = w   # shape (1, reg_max, 1)
+            self.conv.weight.data[0, :, 0] = w  # shape (1, reg_max, 1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """x: (B, reg_max*4, N) 返回: (B, 4, N) — 对每个坐标分量做 softmax 后加权求和.
         """
-        x: (B, reg_max*4, N)
-        返回: (B, 4, N)  — 对每个坐标分量做 softmax 后加权求和
-        """
-        b, c, n = x.shape
+        b, _c, n = x.shape
         # (B, 4, reg_max, N) → softmax on reg_max dim
         x = x.view(b, 4, self.reg_max, n)
-        x = x.softmax(dim=2)                          # (B, 4, reg_max, N)
+        x = x.softmax(dim=2)  # (B, 4, reg_max, N)
         # (B*4, reg_max, N) → Conv1d → (B*4, 1, N)
         x = x.view(b * 4, self.reg_max, n)
-        x = self.conv(x)                              # (B*4, 1, N)
-        return x.view(b, 4, n)                        # (B, 4, N)
+        x = self.conv(x)  # (B*4, 1, N)
+        return x.view(b, 4, n)  # (B, 4, N)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CPU 后处理：对应 NPU_Detect 的两路输出
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def make_anchors_np(img_size: int, strides: list[int]) -> tuple[np.ndarray, np.ndarray]:
-    """
-    在 CPU/NumPy 侧生成 anchor 中心点和对应 stride，
-    完全等价于 ultralytics 的 make_anchors(offset=0.5)。
+    """在 CPU/NumPy 侧生成 anchor 中心点和对应 stride， 完全等价于 ultralytics 的 make_anchors(offset=0.5)。.
 
     Args:
         img_size: 输入图像边长（正方形），如 320
-        strides:  各检测层步长，如 [8, 16, 32]
+        strides: 各检测层步长，如 [8, 16, 32]
 
     Returns:
-        anchors: (N, 2)  anchor 中心坐标（特征图尺度）
-        stride_tensor: (N,)  每个 anchor 对应的 stride
+        anchors: (N, 2) anchor 中心坐标（特征图尺度）
+        stride_tensor: (N,) 每个 anchor 对应的 stride
     """
     anchors_list, strides_list = [], []
     for s in strides:
-        g = img_size // s                         # 特征图尺寸
+        g = img_size // s  # 特征图尺寸
         xs = np.arange(g, dtype=np.float32) + 0.5
         ys = np.arange(g, dtype=np.float32) + 0.5
         # meshgrid: xs 沿列变化，ys 沿行变化
-        grid_x, grid_y = np.meshgrid(xs, ys)     # (g, g)
+        grid_x, grid_y = np.meshgrid(xs, ys)  # (g, g)
         anchors_list.append(
             np.stack([grid_x.ravel(), grid_y.ravel()], axis=1)  # (g*g, 2)
         )
         strides_list.append(np.full(g * g, s, dtype=np.float32))
 
-    anchors      = np.concatenate(anchors_list, axis=0)   # (N, 2)
+    anchors = np.concatenate(anchors_list, axis=0)  # (N, 2)
     stride_tensor = np.concatenate(strides_list, axis=0)  # (N,)
     return anchors, stride_tensor
 
 
 def dfl_np(dist: np.ndarray, reg_max: int) -> np.ndarray:
-    """
-    NumPy 版 DFL：对 dist 做 softmax 后加权求和。
+    """NumPy 版 DFL：对 dist 做 softmax 后加权求和。.
 
     Args:
-        dist: (4, N)  原始 dist 输出，已按 reg_max 拆分
-              实际输入 shape 为 (reg_max*4, N)，函数内部 reshape
+        dist: (4, N) 原始 dist 输出，已按 reg_max 拆分 实际输入 shape 为 (reg_max*4, N)，函数内部 reshape
         reg_max: DFL 通道数
 
     Returns:
@@ -386,39 +375,38 @@ def dfl_np(dist: np.ndarray, reg_max: int) -> np.ndarray:
     dist = dist.reshape(4, reg_max, n)
 
     # softmax on reg_max dim
-    dist = dist - dist.max(axis=1, keepdims=True)   # 数值稳定
-    exp  = np.exp(dist)
-    dist = exp / exp.sum(axis=1, keepdims=True)     # (4, reg_max, N)
+    dist = dist - dist.max(axis=1, keepdims=True)  # 数值稳定
+    exp = np.exp(dist)
+    dist = exp / exp.sum(axis=1, keepdims=True)  # (4, reg_max, N)
 
     # 加权求和：权重为 [0, 1, ..., reg_max-1]
     weights = np.arange(reg_max, dtype=np.float32).reshape(1, reg_max, 1)
-    return (dist * weights).sum(axis=1)             # (4, N)
+    return (dist * weights).sum(axis=1)  # (4, N)
 
 
 def dist2bbox_np(dist_ltrb: np.ndarray, anchors: np.ndarray) -> np.ndarray:
-    """
-    dist(ltrb) + anchor → xyxy（输入图像尺度，已乘 stride）。
+    """dist(ltrb) + anchor → xyxy（输入图像尺度，已乘 stride）。.
 
     Args:
-        dist_ltrb: (4, N)  ltrb 偏移（特征图尺度）
-        anchors:   (N, 2)  anchor 中心 (cx, cy)（特征图尺度）
+        dist_ltrb: (4, N) ltrb 偏移（特征图尺度）
+        anchors: (N, 2) anchor 中心 (cx, cy)（特征图尺度）
 
     Returns:
         (N, 4)  x1y1x2y2（特征图尺度，调用方再乘 stride）
     """
-    lt = dist_ltrb[:2].T   # (N, 2)  left, top
-    rb = dist_ltrb[2:].T   # (N, 2)  right, bottom
-    x1y1 = anchors - lt    # (N, 2)
-    x2y2 = anchors + rb    # (N, 2)
-    return np.concatenate([x1y1, x2y2], axis=1)   # (N, 4)
+    lt = dist_ltrb[:2].T  # (N, 2)  left, top
+    rb = dist_ltrb[2:].T  # (N, 2)  right, bottom
+    x1y1 = anchors - lt  # (N, 2)
+    x2y2 = anchors + rb  # (N, 2)
+    return np.concatenate([x1y1, x2y2], axis=1)  # (N, 4)
 
 
 def nms_boxes_np(boxes: np.ndarray, scores: np.ndarray, nms_thresh: float) -> np.ndarray:
-    """标准 IoU NMS，boxes 为 xyxy 格式。"""
+    """标准 IoU NMS，boxes 为 xyxy 格式。."""
     x1, y1, x2, y2 = boxes[:, 0], boxes[:, 1], boxes[:, 2], boxes[:, 3]
-    areas  = (x2 - x1) * (y2 - y1)
-    order  = scores.argsort()[::-1]
-    keep   = []
+    areas = (x2 - x1) * (y2 - y1)
+    order = scores.argsort()[::-1]
+    keep = []
     while order.size > 0:
         i = order[0]
         keep.append(i)
@@ -426,69 +414,66 @@ def nms_boxes_np(boxes: np.ndarray, scores: np.ndarray, nms_thresh: float) -> np
         yy1 = np.maximum(y1[i], y1[order[1:]])
         xx2 = np.minimum(x2[i], x2[order[1:]])
         yy2 = np.minimum(y2[i], y2[order[1:]])
-        w1  = np.maximum(0.0, xx2 - xx1 + 1e-5)
-        h1  = np.maximum(0.0, yy2 - yy1 + 1e-5)
+        w1 = np.maximum(0.0, xx2 - xx1 + 1e-5)
+        h1 = np.maximum(0.0, yy2 - yy1 + 1e-5)
         inter = w1 * h1
-        ovr   = inter / (areas[i] + areas[order[1:]] - inter)
+        ovr = inter / (areas[i] + areas[order[1:]] - inter)
         order = order[np.where(ovr <= nms_thresh)[0] + 1]
     return np.array(keep, dtype=np.int64)
 
 
 def yolov12_post_process_full(
     outputs,
-    img_size:   int   = 320,
-    strides:    list  = None,
-    reg_max:    int   = 16,
+    img_size: int = 320,
+    strides: list | None = None,
+    reg_max: int = 16,
     conf_thresh: float = 0.25,
-    nms_thresh:  float = 0.45,
+    nms_thresh: float = 0.45,
 ):
-    """
-    对应 NPU_Detect 输出的完整 CPU 后处理。
+    """对应 NPU_Detect 输出的完整 CPU 后处理。.
 
     Args:
-        outputs:     RKNN inference 返回的列表
-                     outputs[0]: boxes  shape (1, reg_max*4, N)
-                     outputs[1]: scores shape (1, nc, N)
-        img_size:    输入图像边长
-        strides:     各层 stride，默认 [8, 16, 32]
-        reg_max:     与模型导出时一致
+        outputs: RKNN inference 返回的列表
+        outputs[0]: boxes shape (1, reg_max*4, N)
+        outputs[1]: scores shape (1, nc, N)
+        img_size: 输入图像边长
+        strides: 各层 stride，默认 [8, 16, 32]
+        reg_max: 与模型导出时一致
         conf_thresh: 置信度阈值
-        nms_thresh:  NMS IoU 阈值
+        nms_thresh: NMS IoU 阈值
 
     Returns:
-        boxes   (M, 4)  xyxy，输入图像尺度
-        classes (M,)    类别索引
-        scores  (M,)    置信度
+        boxes   (M, 4)  xyxy，输入图像尺度: classes (M,) 类别索引 scores (M,) 置信度
     """
     if strides is None:
         strides = [8, 16, 32]
 
     # ── 取出原始输出 ──────────────────────────────────────────────────────────
-    raw_boxes  = outputs[0][0]   # (reg_max*4, N)
-    raw_scores = outputs[1][0]   # (nc, N)
+    raw_boxes = outputs[0][0]  # (reg_max*4, N)
+    raw_scores = outputs[1][0]  # (nc, N)
 
     # ── 1. DFL 解码：dist → ltrb（特征图尺度）────────────────────────────────
     if reg_max > 1:
-        ltrb = dfl_np(raw_boxes, reg_max)   # (4, N)
+        ltrb = dfl_np(raw_boxes, reg_max)  # (4, N)
     else:
-        ltrb = raw_boxes                    # reg_max==1，Identity，直接用
+        ltrb = raw_boxes  # reg_max==1，Identity，直接用
 
     # ── 2. 生成 anchor，dist2bbox，乘 stride → 输入图像尺度的 xyxy ───────────
-    anchors, stride_tensor = make_anchors_np(img_size, strides)   # (N,2), (N,)
-    boxes_xyxy = dist2bbox_np(ltrb, anchors)                      # (N, 4) 特征图尺度
-    boxes_xyxy = boxes_xyxy * stride_tensor[:, None]              # (N, 4) 输入图像尺度
+    anchors, stride_tensor = make_anchors_np(img_size, strides)  # (N,2), (N,)
+    boxes_xyxy = dist2bbox_np(ltrb, anchors)  # (N, 4) 特征图尺度
+    boxes_xyxy = boxes_xyxy * stride_tensor[:, None]  # (N, 4) 输入图像尺度
 
     # ── 3. sigmoid + 过滤 ──────────────────────────────────────────────────────
-    scores_sig = 1.0 / (1.0 + np.exp(-raw_scores))   # (nc, N)
-    scores_sig = scores_sig.T                          # (N, nc)
+    scores_sig = 1.0 / (1.0 + np.exp(-raw_scores))  # (nc, N)
+    scores_sig = scores_sig.T  # (N, nc)
 
-    class_max_score = scores_sig.max(axis=-1)          # (N,)
-    classes         = scores_sig.argmax(axis=-1)       # (N,)
+    class_max_score = scores_sig.max(axis=-1)  # (N,)
+    classes = scores_sig.argmax(axis=-1)  # (N,)
 
     mask = class_max_score >= conf_thresh
-    boxes_xyxy      = boxes_xyxy[mask]
+    boxes_xyxy = boxes_xyxy[mask]
     class_max_score = class_max_score[mask]
-    classes         = classes[mask]
+    classes = classes[mask]
 
     if len(boxes_xyxy) == 0:
         return None, None, None
@@ -497,8 +482,8 @@ def yolov12_post_process_full(
     nboxes, nclasses, nscores = [], [], []
     for c in set(classes):
         inds = np.where(classes == c)[0]
-        b    = boxes_xyxy[inds]
-        s    = class_max_score[inds]
+        b = boxes_xyxy[inds]
+        s = class_max_score[inds]
         keep = nms_boxes_np(b, s, nms_thresh)
         if len(keep):
             nboxes.append(b[keep])
@@ -513,6 +498,7 @@ def yolov12_post_process_full(
         np.concatenate(nclasses),
         np.concatenate(nscores),
     )
+
 
 class Segment(Detect):
     """YOLO Segment head for segmentation models.
@@ -559,12 +545,12 @@ class Segment(Detect):
     @property
     def one2many(self):
         """Returns the one-to-many head components, here for backward compatibility."""
-        return dict(box_head=self.cv2, cls_head=self.cv3, mask_head=self.cv4)
+        return {"box_head": self.cv2, "cls_head": self.cv3, "mask_head": self.cv4}
 
     @property
     def one2one(self):
         """Returns the one-to-one head components."""
-        return dict(box_head=self.one2one_cv2, cls_head=self.one2one_cv3, mask_head=self.one2one_cv4)
+        return {"box_head": self.one2one_cv2, "cls_head": self.one2one_cv3, "mask_head": self.one2one_cv4}
 
     def forward(self, x: list[torch.Tensor]) -> tuple | list[torch.Tensor] | dict[str, torch.Tensor]:
         """Return model outputs and mask coefficients if training, otherwise return outputs and mask coefficients."""
@@ -719,12 +705,12 @@ class OBB(Detect):
     @property
     def one2many(self):
         """Returns the one-to-many head components, here for backward compatibility."""
-        return dict(box_head=self.cv2, cls_head=self.cv3, angle_head=self.cv4)
+        return {"box_head": self.cv2, "cls_head": self.cv3, "angle_head": self.cv4}
 
     @property
     def one2one(self):
         """Returns the one-to-one head components."""
-        return dict(box_head=self.one2one_cv2, cls_head=self.one2one_cv3, angle_head=self.one2one_cv4)
+        return {"box_head": self.one2one_cv2, "cls_head": self.one2one_cv3, "angle_head": self.one2one_cv4}
 
     def _inference(self, x: dict[str, torch.Tensor]) -> torch.Tensor:
         """Decode predicted bounding boxes and class probabilities, concatenated with rotation angles."""
@@ -850,12 +836,12 @@ class Pose(Detect):
     @property
     def one2many(self):
         """Returns the one-to-many head components, here for backward compatibility."""
-        return dict(box_head=self.cv2, cls_head=self.cv3, pose_head=self.cv4)
+        return {"box_head": self.cv2, "cls_head": self.cv3, "pose_head": self.cv4}
 
     @property
     def one2one(self):
         """Returns the one-to-one head components."""
-        return dict(box_head=self.one2one_cv2, cls_head=self.one2one_cv3, pose_head=self.one2one_cv4)
+        return {"box_head": self.one2one_cv2, "cls_head": self.one2one_cv3, "pose_head": self.one2one_cv4}
 
     def _inference(self, x: dict[str, torch.Tensor]) -> torch.Tensor:
         """Decode predicted bounding boxes and class probabilities, concatenated with keypoints."""
@@ -964,24 +950,24 @@ class Pose26(Pose):
     @property
     def one2many(self):
         """Returns the one-to-many head components, here for backward compatibility."""
-        return dict(
-            box_head=self.cv2,
-            cls_head=self.cv3,
-            pose_head=self.cv4,
-            kpts_head=self.cv4_kpts,
-            kpts_sigma_head=self.cv4_sigma,
-        )
+        return {
+            "box_head": self.cv2,
+            "cls_head": self.cv3,
+            "pose_head": self.cv4,
+            "kpts_head": self.cv4_kpts,
+            "kpts_sigma_head": self.cv4_sigma,
+        }
 
     @property
     def one2one(self):
         """Returns the one-to-one head components."""
-        return dict(
-            box_head=self.one2one_cv2,
-            cls_head=self.one2one_cv3,
-            pose_head=self.one2one_cv4,
-            kpts_head=self.one2one_cv4_kpts,
-            kpts_sigma_head=self.one2one_cv4_sigma,
-        )
+        return {
+            "box_head": self.one2one_cv2,
+            "cls_head": self.one2one_cv3,
+            "pose_head": self.one2one_cv4,
+            "kpts_head": self.one2one_cv4_kpts,
+            "kpts_sigma_head": self.one2one_cv4_sigma,
+        }
 
     def forward_head(
         self,
@@ -1140,7 +1126,7 @@ class WorldDetect(Detect):
         bs = x[0].shape[0]
         x_cat = torch.cat([xi.view(bs, self.no, -1) for xi in x], 2)
         boxes, scores = x_cat.split((self.reg_max * 4, self.nc), 1)
-        preds = dict(boxes=boxes, scores=scores, feats=feats)
+        preds = {"boxes": boxes, "scores": scores, "feats": feats}
         if self.training:
             return preds
         y = self._inference(preds)
@@ -1384,7 +1370,7 @@ class YOLOEDetect(Detect):
             boxes.append(box.view(bs, self.reg_max * 4, -1))
             scores.append(score)
             index.append(idx)
-        preds = dict(boxes=torch.cat(boxes, 2), scores=torch.cat(scores, 2), feats=x, index=torch.cat(index))
+        preds = {"boxes": torch.cat(boxes, 2), "scores": torch.cat(scores, 2), "feats": x, "index": torch.cat(index)}
         y = self._inference(preds)
         if self.end2end:
             y = self.postprocess(y.permute(0, 2, 1))
@@ -1400,18 +1386,18 @@ class YOLOEDetect(Detect):
     @property
     def one2many(self):
         """Returns the one-to-many head components, here for v3/v5/v8/v9/v11 backward compatibility."""
-        return dict(box_head=self.cv2, cls_head=self.cv3, contrastive_head=self.cv4)
+        return {"box_head": self.cv2, "cls_head": self.cv3, "contrastive_head": self.cv4}
 
     @property
     def one2one(self):
         """Returns the one-to-one head components."""
-        return dict(box_head=self.one2one_cv2, cls_head=self.one2one_cv3, contrastive_head=self.one2one_cv4)
+        return {"box_head": self.one2one_cv2, "cls_head": self.one2one_cv3, "contrastive_head": self.one2one_cv4}
 
     def forward_head(self, x, box_head, cls_head, contrastive_head):
         """Concatenates and returns predicted bounding boxes, class probabilities, and contrastive scores."""
         assert len(x) == 4, f"Expected 4 features including 3 feature maps and 1 text embeddings, but got {len(x)}."
         if box_head is None or cls_head is None:  # for fused inference
-            return dict()
+            return {}
         bs = x[0].shape[0]  # batch size
         boxes = torch.cat([box_head[i](x[i]).view(bs, 4 * self.reg_max, -1) for i in range(self.nl)], dim=-1)
         self.nc = x[-1].shape[1]
@@ -1419,7 +1405,7 @@ class YOLOEDetect(Detect):
             [contrastive_head[i](cls_head[i](x[i]), x[-1]).reshape(bs, self.nc, -1) for i in range(self.nl)], dim=-1
         )
         self.no = self.nc + self.reg_max * 4  # self.nc could be changed when inference with different texts
-        return dict(boxes=boxes, scores=scores, feats=x[:3])
+        return {"boxes": boxes, "scores": scores, "feats": x[:3]}
 
     def bias_init(self):
         """Initialize Detect() biases, WARNING: requires stride availability."""
@@ -1497,17 +1483,17 @@ class YOLOESegment(YOLOEDetect):
     @property
     def one2many(self):
         """Returns the one-to-many head components, here for v3/v5/v8/v9/v11 backward compatibility."""
-        return dict(box_head=self.cv2, cls_head=self.cv3, mask_head=self.cv5, contrastive_head=self.cv4)
+        return {"box_head": self.cv2, "cls_head": self.cv3, "mask_head": self.cv5, "contrastive_head": self.cv4}
 
     @property
     def one2one(self):
         """Returns the one-to-one head components."""
-        return dict(
-            box_head=self.one2one_cv2,
-            cls_head=self.one2one_cv3,
-            mask_head=self.one2one_cv5,
-            contrastive_head=self.one2one_cv4,
-        )
+        return {
+            "box_head": self.one2one_cv2,
+            "cls_head": self.one2one_cv3,
+            "mask_head": self.one2one_cv5,
+            "contrastive_head": self.one2one_cv4,
+        }
 
     def forward_lrpc(self, x: list[torch.Tensor]) -> torch.Tensor | tuple:
         """Process features with fused text embeddings to generate detections for prompt-free model."""
@@ -1530,13 +1516,13 @@ class YOLOESegment(YOLOEDetect):
             index.append(idx)
         mc = torch.cat([cv5[i](x[i]).view(bs, self.nm, -1) for i in range(self.nl)], 2)
         index = torch.cat(index)
-        preds = dict(
-            boxes=torch.cat(boxes, 2),
-            scores=torch.cat(scores, 2),
-            feats=x,
-            index=index,
-            mask_coefficient=mc * index.int() if self.export and not self.dynamic else mc[..., index],
-        )
+        preds = {
+            "boxes": torch.cat(boxes, 2),
+            "scores": torch.cat(scores, 2),
+            "feats": x,
+            "index": index,
+            "mask_coefficient": mc * index.int() if self.export and not self.dynamic else mc[..., index],
+        }
         y = self._inference(preds)
         if self.end2end:
             y = self.postprocess(y.permute(0, 2, 1))
