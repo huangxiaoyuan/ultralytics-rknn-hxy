@@ -1,4 +1,3 @@
-from click.core import batch
 from ultralytics import YOLO
 
 if __name__ == "__main__":
@@ -9,17 +8,17 @@ if __name__ == "__main__":
         imgsz=640,
         device="0,1",
         batch=16,
-        #val=False,
+        # val=False,
     )
     # 自动获取本次训练的保存目录
 
 
 # Evaluate model performance on the validation set
-#metrics = model.val()
+# metrics = model.val()
 
 # Perform object detection on an image
-#results = model("./ultralytics/assets/Platalea_minor_004.jpg")
-#results[0].show()
+# results = model("./ultralytics/assets/Platalea_minor_004.jpg")
+# results[0].show()
 
 # Export the model to ONNX format
 # path = model.export(format="onnx")  # return path to exported model
