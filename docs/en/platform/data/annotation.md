@@ -404,11 +404,11 @@ Efficient annotation with keyboard shortcuts:
 
 === "Drawing"
 
-    | Shortcut      | Action                                              |
-    | ------------- | --------------------------------------------------- |
-    | `Click+Drag`  | Draw bounding box (detect/OBB)                      |
-    | `Click`       | Add polygon point (segment) / Place skeleton (pose) |
-    | `Right-click` | Complete polygon / Add SAM negative point            |
+    | Shortcut      | Action                                                |
+    | ------------- | ----------------------------------------------------- |
+    | `Click+Drag`  | Draw bounding box (detect/OBB)                        |
+    | `Click`       | Add polygon point (segment) / Place skeleton (pose)   |
+    | `Right-click` | Complete polygon / Add SAM negative point             |
     | `Enter`       | Complete polygon / Confirm pose / Save SAM annotation |
     | `Escape`      | Cancel pose / Save SAM annotation / Deselect / Exit   |
 

@@ -222,11 +222,11 @@ Images can be sorted and filtered for efficient browsing:
 
 === "Filters"
 
-    | Filter           | Options                            |
-    | ---------------- | ---------------------------------- |
-    | **Split filter** | Train, Val, Test, or All           |
+    | Filter           | Options                               |
+    | ---------------- | ------------------------------------- |
+    | **Split filter** | Train, Val, Test, or All              |
     | **Label filter** | All images, Annotated, or Unannotated |
-    | **Search**       | Filter images by filename          |
+    | **Search**       | Filter images by filename             |
 
 !!! tip "Finding Unlabeled Images"
 
@@ -335,12 +335,12 @@ Images that failed processing are listed here with:
 
 ??? info "Common Processing Errors"
 
-    | Error                      | Cause                                   | Fix                                    |
-    | -------------------------- | --------------------------------------- | -------------------------------------- |
-    | Unable to read image file  | Corrupted or unsupported format         | Re-export from image editor            |
-    | Incomplete or corrupted    | File was truncated during transfer      | Re-download the original file          |
-    | Image too small            | Minimum dimension below 28px            | Use higher resolution source images    |
-    | Unsupported color mode     | CMYK or indexed color mode              | Convert to RGB mode                    |
+    | Error                     | Cause                              | Fix                                 |
+    | ------------------------- | ---------------------------------- | ----------------------------------- |
+    | Unable to read image file | Corrupted or unsupported format    | Re-export from image editor         |
+    | Incomplete or corrupted   | File was truncated during transfer | Re-download the original file       |
+    | Image too small           | Minimum dimension below 28px       | Use higher resolution source images |
+    | Unsupported color mode    | CMYK or indexed color mode         | Convert to RGB mode                 |
 
 ### Versions Tab
 
